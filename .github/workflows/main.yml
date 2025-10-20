@@ -22,7 +22,7 @@ jobs:
       - name: 1.2 Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # === ЭТАП 2: УСТАНОВКА И КЭШИРОВАНИЕ УТИЛИТ ===
+      # === ЭТАП 2: УСТАНОВКА И КЭШИРОВАНИЕ УТИЛИТ (cargo-edit) ===
       - name: 2.1 Cache cargo-edit binary
         id: cache-cargo-edit
         uses: actions/cache@v3
@@ -33,9 +33,10 @@ jobs:
             ${{ runner.os }}-cargo-bin-
 
       - name: 2.2 Install cargo-edit
-        run: cargo install cargo-edit
+        # Используем --force, чтобы избежать ошибки 101 при восстановлении из кэша
+        run: cargo install cargo-edit --force
 
-      # === ЭТАП 3: КЭШИРОВАНИЕ ПРОЕКТА ===
+      # === ЭТАП 3: КЭШИРОВАНИЕ ЗАВИСИМОСТЕЙ ПРОЕКТА ===
       - name: 3.1 Cache Cargo dependencies and target
         uses: actions/cache@v3
         with:
