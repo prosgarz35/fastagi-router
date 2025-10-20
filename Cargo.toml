@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-asterisk-agi = "*"
+asterisk_agi = "0.1.0"
 once_cell = "*"
 itoa = "*"

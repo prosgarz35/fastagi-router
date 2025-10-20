@@ -1,7 +1,10 @@
-use asterisk_agi::{FastAgi as Agi, AgiError}; // Correct types from asterisk-agi v0.1.1
 use std::collections::HashMap;
+use std::env;
+use std::io::{self, BufRead, Write};
+use std::process;
 use itoa;
 use once_cell::sync::Lazy;
+use asterisk_agi::*; // Импорт функций AGI: answer, set_variable, etc.
 
 const CITY_PREFIX_U64: u64 = 73843;
 const TEN_BILLION: u64 = 10_000_000_000;
@@ -123,17 +126,18 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     make_response(target, outbound_trunk)
 }
 
-fn send_agi_response(agi_obj: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
+fn send_agi_response(response: &AgiResponse) -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = itoa::Buffer::new();
-    agi_obj.set_variable(ROUTE_STATUS, response.status)?;
-    agi_obj.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
+    set_variable(ROUTE_STATUS, response.status)?;
+    set_verbose("AGI Router executed", 1)?;
+    set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
     if let Some(target) = &response.target {
         match target {
-            RouteTarget::Internal(ext) => { agi_obj.set_variable(TARGET_EXT, buffer.format(*ext))?; }
+            RouteTarget::Internal(ext) => { set_variable(TARGET_EXT, buffer.format(*ext))?; }
             RouteTarget::External(num) => {
-                agi_obj.set_variable(OUT_NUMBER, buffer.format(*num))?;
+                set_variable(OUT_NUMBER, buffer.format(*num))?;
                 if let Some(trunk) = response.outbound_trunk {
-                    agi_obj.set_variable(DIAL_TRUNK, buffer.format(trunk))?;
+                    set_variable(DIAL_TRUNK, buffer.format(trunk))?;
                 }
             }
         }
@@ -141,14 +145,30 @@ fn send_agi_response(agi_obj: &mut Agi, response: &AgiResponse) -> Result<(), Ag
     Ok(())
 }
 
-fn main() -> Result<(), AgiError> {
-    let mut agi_obj = Agi::new()?;
-    let args = agi_obj.read_args()?;
-    let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
-    let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
+fn read_agi_args() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let stdin = io::stdin();
+    let mut args = Vec::new();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.is_empty() || line.starts_with('agi_') {
+            continue;
+        }
+        args.push(line);
+        if line == "" {
+            break;
+        }
+    }
+    Ok(args)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    answer()?;
+    let args = read_agi_args()?;
+    let raw_input = args.get(0).cloned().unwrap_or_default();
+    let call_type_str = args.get(1).cloned().unwrap_or_else(|| "unknown".to_string());
     let caller_id_ext = args.get(2).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
 
-    let call_type = match call_type_str {
+    let call_type = match call_type_str.as_str() {
         "inbound" => CallType::Inbound,
         "old_short" => CallType::OldShort,
         "city_6" => CallType::City6,
@@ -158,7 +178,7 @@ fn main() -> Result<(), AgiError> {
         _ => CallType::Unknown,
     };
 
-    let response = dispatch_route(raw_input, caller_id_ext, call_type);
-    send_agi_response(&mut agi_obj, &response)?;
+    let response = dispatch_route(&raw_input, caller_id_ext, call_type);
+    send_agi_response(&response)?;
     Ok(())
 }
