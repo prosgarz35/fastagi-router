@@ -1,4 +1,4 @@
-use asterisk_agi::agi::{Agi, AgiError}; // Hypothetical module path, adjust based on crate docs
+use asterisk_agi::{FastAgi as Agi, AgiError}; // Correct types from asterisk-agi v0.1.1
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
