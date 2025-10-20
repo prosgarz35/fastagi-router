@@ -1,0 +1,9 @@
+[package]
+name = "fastagi_router"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agi = "^0.3"
+once_cell = "^1.19"
+itoa = "^1.0"
