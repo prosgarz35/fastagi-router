@@ -1,34 +1,70 @@
-name: Build Rust and Create Release
+name: Build Rust and Auto Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # необходимо для создания и пуша тегов/релизов
 
     steps:
+      # 1. Checkout репозитория с полной историей
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # 2. Установить Rust toolchain
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Запуск тестов перед сборкой
+      # 3. Запуск тестов
       - name: Run tests
         run: cargo test --release
 
+      # 4. Сборка бинарника
       - name: Build release binary
         run: cargo build --release
 
+      # 5. Получение следующей версии релиза
+      - name: Get next release version
+        id: get_version
+        run: |
+          latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
+          echo "Latest release: $latest"
+          if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            minor=$((minor+1))
+            next="v${major}.${minor}.0"
+          else
+            next="v0.1.0"
+          fi
+          echo "Next release: $next"
+          echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 6. Создание и пуш Git-тега
+      - name: Create and Push Git Tag
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag ${{ env.RELEASE_VERSION }}
+          git push origin ${{ env.RELEASE_VERSION }}
+
+      # 7. Создание GitHub Release и загрузка бинарника
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
           files: target/release/fastagi_router
-          name: Release ${{ github.ref_name }}
+          name: Release ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ env.RELEASE_VERSION }}
           draft: false
           prerelease: false
         env:
