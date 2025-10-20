@@ -1,4 +1,4 @@
-use asterisk_agi as agi; // Единственный рабочий способ
+use asterisk_agi::*; // Последняя попытка: импортируем все публичные типы из корня
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
@@ -123,8 +123,8 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     make_response(target, outbound_trunk)
 }
 
-// Изменяем сигнатуру, используя полные пути через псевдоним 'agi'
-fn send_agi_response(agi_obj: &mut agi::Agi, response: &AgiResponse) -> Result<(), agi::AgiError> {
+// Теперь используем Agi и AgiError БЕЗ ПРЕФИКСА
+fn send_agi_response(agi_obj: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
     let mut buffer = itoa::Buffer::new();
     agi_obj.set_variable(ROUTE_STATUS, response.status)?;
     agi_obj.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
@@ -142,9 +142,9 @@ fn send_agi_response(agi_obj: &mut agi::Agi, response: &AgiResponse) -> Result<(
     Ok(())
 }
 
-// Изменяем главную функцию
-fn main() -> Result<(), agi::AgiError> {
-    let mut agi_obj = agi::Agi::new()?;
+// Теперь используем Agi и AgiError БЕЗ ПРЕФИКСА
+fn main() -> Result<(), AgiError> {
+    let mut agi_obj = Agi::new()?;
     let args = agi_obj.read_args()?; 
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
