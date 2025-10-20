@@ -1,4 +1,4 @@
-name: Build Rust and Auto Release
+name: Build Rust and Auto Release (semantic versioning)
 
 on:
   push:
@@ -10,47 +10,60 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # необходимо для создания и пуша тегов/релизов
+      contents: write # нужно для создания и пуша тегов
 
     steps:
-      # 1. Checkout репозитория с полной историей
-      - name: Checkout repository
+      # 1. Клонируем репозиторий
+      - name: Checkout repository (full history)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Установить Rust toolchain
+      # 2. Устанавливаем Rust
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 3. Запуск тестов
+      # 3. Запускаем тесты
       - name: Run tests
         run: cargo test --release
 
-      # 4. Сборка бинарника
+      # 4. Сборка release
       - name: Build release binary
         run: cargo build --release
 
-      # 5. Получение следующей версии релиза
+      # 5. Вычисляем следующий релиз с semantic versioning
       - name: Get next release version
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
           echo "Latest release: $latest"
+
           if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             major="${BASH_REMATCH[1]}"
             minor="${BASH_REMATCH[2]}"
-            minor=$((minor+1))
-            next="v${major}.${minor}.0"
+            patch="${BASH_REMATCH[3]}"
+
+            patch=$((patch+1))
+            if [[ $patch -gt 9 ]]; then
+              patch=0
+              minor=$((minor+1))
+              if [[ $minor -gt 9 ]]; then
+                minor=0
+                major=$((major+1))
+              fi
+            fi
+
+            next="v${major}.${minor}.${patch}"
           else
-            next="v0.1.0"
+            next="v0.0.1"
           fi
+
           echo "Next release: $next"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. Создание и пуш Git-тега
+      # 6. Создаем и пушим Git-тег
       - name: Create and Push Git Tag
         run: |
           git config user.name github-actions
@@ -58,7 +71,7 @@ jobs:
           git tag ${{ env.RELEASE_VERSION }}
           git push origin ${{ env.RELEASE_VERSION }}
 
-      # 7. Создание GitHub Release и загрузка бинарника
+      # 7. Создаем релиз на GitHub и загружаем бинарник
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
