@@ -13,17 +13,15 @@ jobs:
       contents: write
 
     steps:
-      # === ЭТАП 1: НАСТРОЙКА СРЕДЫ ===
-      - name: 1.1 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 1.2 Setup Rust toolchain
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # === ЭТАП 2: УСТАНОВКА И КЭШИРОВАНИЕ УТИЛИТ (cargo-edit) ===
-      - name: 2.1 Cache cargo-edit binary
+      - name: Cache cargo-edit binary
         id: cache-cargo-edit
         uses: actions/cache@v3
         with:
@@ -32,12 +30,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-bin-
 
-      - name: 2.2 Install cargo-edit
-        # Используем --force, чтобы избежать ошибки 101 при восстановлении из кэша
-        run: cargo install cargo-edit --force
+      - name: Install cargo-edit (Conditional)
+        run: |
+          if ! command -v cargo-set-version &> /dev/null
+          then
+              cargo install cargo-edit
+          fi
 
-      # === ЭТАП 3: КЭШИРОВАНИЕ ЗАВИСИМОСТЕЙ ПРОЕКТА ===
-      - name: 3.1 Cache Cargo dependencies and target
+      - name: Cache Cargo dependencies and target
         uses: actions/cache@v3
         with:
           path: |
@@ -48,19 +48,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-deps-
 
-      # === ЭТАП 4: СБОРКА И ТЕСТИРОВАНИЕ ===
-      - name: 4.1 Run tests
+      - name: Run tests
         run: cargo test --release
 
-      - name: 4.2 Build release binary
+      - name: Build release binary
         run: cargo build --release
 
-      # === ЭТАП 5: АВТО-ВЕРСИОНИРОВАНИЕ ===
-      - name: 5.1 Get next release version
+      - name: Get next release version
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
-          echo "Latest release: $latest"
           
           if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             major="${BASH_REMATCH[1]}"
@@ -85,34 +82,29 @@ jobs:
           fi
 
           next="v${major}.${minor}.${patch}"
-          echo "Next release: $next"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
           echo "RELEASE_TAG=$next" >> $GITHUB_ENV
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 5.2 Update Cargo.toml version
+      - name: Update Cargo.toml version
         run: |
           ver=${{ env.RELEASE_VERSION }}
           ver=${ver#v}
           cargo set-version $ver
 
-      # === ЭТАП 6: УДАЛЕНИЕ СТАРЫХ РЕЛИЗОВ ===
-      - name: 6.1 Delete all previous releases and tags
+      - name: Delete all previous releases and tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Checking for old releases to delete..."
           gh release list --limit 100 --json tagName --jq '.[].tagName' | while read tag; do
             if [ "$tag" != "${{ env.RELEASE_TAG }}" ]; then
-              echo "Deleting old release and tag: $tag"
-              gh release delete "$tag" --yes || echo "Release $tag not found or already deleted."
+              gh release delete "$tag" --yes || true
               git push --delete origin "$tag" || true
             fi
           done
 
-      # === ЭТАП 7: КОММИТ И ПУШ ТЕГА ===
-      - name: 7.1 Commit Cargo.toml and push tag
+      - name: Commit Cargo.toml and push tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
@@ -122,8 +114,7 @@ jobs:
           git push origin main
           git push origin ${{ env.RELEASE_TAG }}
 
-      # === ЭТАП 8: СОЗДАНИЕ НОВОГО РЕЛИЗА ===
-      - name: 8.1 Create GitHub Release and Upload Binary
+      - name: Create GitHub Release and Upload Binary
         uses: softprops/action-gh-release@v1
         with:
           files: target/release/fastagi_router
