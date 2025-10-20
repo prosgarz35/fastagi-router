@@ -11,6 +11,8 @@ const TARGET_EXT: &str = "TARGET_EXT";
 const OUT_NUMBER: &str = "OUT_NUMBER";
 const DIAL_TRUNK: &str = "DIAL_TRUNK";
 
+// Версия 0.1.6
+
 #[derive(Debug)]
 enum RouteTarget {
     Internal(u16),
