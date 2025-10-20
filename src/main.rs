@@ -1,4 +1,5 @@
-use asterisk_agi::agi::{Agi, AgiError}; // ИСПРАВЛЕНО
+use asterisk_agi as agi;
+use agi::{Agi, AgiError};
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
