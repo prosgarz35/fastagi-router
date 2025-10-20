@@ -1,8 +1,7 @@
 use std::collections::HashMap;
-use std::io;
 use itoa;
 use once_cell::sync::Lazy;
-use asterisk_agi::*;
+use asterisk_agi::*; // импортируем всё, включая set_variable, set_verbose, read_variables, answer
 
 const CITY_PREFIX_U64: u64 = 73843;
 const TEN_BILLION: u64 = 10_000_000_000;
@@ -125,7 +124,7 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = answer(); // Answer the call
+    answer()?; // Answer the call
     let variables = read_variables()?; // Read AGI variables from stdin
 
     let raw_input = variables.get("agi_arg1").cloned().unwrap_or_default();
@@ -159,6 +158,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let _ = verbose("AGI Router executed", 1); // Use verbose instead of set_verbose
+    set_verbose("AGI Router executed", 1)?; // исправлено
     Ok(())
 }
