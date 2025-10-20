@@ -1,27 +1,55 @@
-name: Build Rust project
+name: Build, Test and Release Rust Project
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  release:
+    types: [created]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Скачиваем код
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Устанавливаем Rust stable
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # 3. Обновляем зависимости и кешируем (опционально)
+      - name: Cargo fetch
+        run: cargo fetch
+
+      # 4. Запускаем тесты
+      - name: Run tests
+        run: cargo test --release --verbose
+
+      # 5. Сборка бинарника release для Linux
       - name: Build release binary
         run: cargo build --release
 
-      - name: Upload release binary artifact
-        uses: actions/upload-artifact@v4
+      # 6. Создаём GitHub Release (только если workflow вызван через релиз)
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        if: github.event_name == 'release'
         with:
-          name: fastagi_router
-          path: target/release/fastagi_router
+          tag_name: ${{ github.event.release.tag_name }}
+          release_name: Release ${{ github.event.release.tag_name }}
+          draft: false
+          prerelease: false
+
+      # 7. Загружаем бинарник в релиз
+      - name: Upload Release Asset
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: target/release/fastagi_router
+          asset_name: fastagi_router
+          asset_content_type: application/octet-stream
