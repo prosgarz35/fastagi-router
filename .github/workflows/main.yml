@@ -1,4 +1,4 @@
-name: Build Rust and Auto Release (semantic versioning)
+name: Build Rust and Auto Release
 
 on:
   push:
@@ -10,11 +10,11 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # нужно для создания и пуша тегов
+      contents: write  # нужно для создания и пуша тегов
 
     steps:
-      # 1. Клонируем репозиторий
-      - name: Checkout repository (full history)
+      # 1. Checkout репозитория с полной историей
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -23,55 +23,60 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # 2a. Устанавливаем cargo-edit (для cargo set-version)
+      - name: Install cargo-edit
+        run: cargo install cargo-edit
+
       # 3. Запускаем тесты
       - name: Run tests
         run: cargo test --release
 
-      # 4. Сборка release
+      # 4. Собираем бинарник release
       - name: Build release binary
         run: cargo build --release
 
-      # 5. Вычисляем следующий релиз с semantic versioning
+      # 5. Определяем следующую версию релиза
       - name: Get next release version
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
           echo "Latest release: $latest"
-
           if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             major="${BASH_REMATCH[1]}"
             minor="${BASH_REMATCH[2]}"
             patch="${BASH_REMATCH[3]}"
-
-            patch=$((patch+1))
-            if [[ $patch -gt 9 ]]; then
+            patch=$((patch + 1))
+            if [ $patch -ge 10 ]; then
               patch=0
-              minor=$((minor+1))
-              if [[ $minor -gt 9 ]]; then
-                minor=0
-                major=$((major+1))
-              fi
+              minor=$((minor + 1))
             fi
-
+            if [ $minor -ge 10 ]; then
+              minor=0
+              major=$((major + 1))
+            fi
             next="v${major}.${minor}.${patch}"
           else
-            next="v0.0.1"
+            next="v0.1.0"
           fi
-
           echo "Next release: $next"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. Создаем и пушим Git-тег
+      # 6. Обновляем версию в Cargo.toml через cargo set-version
+      - name: Update Cargo.toml version
+        run: cargo set-version ${{ env.RELEASE_VERSION }} 
+
+      # 7. Создаём и пушим git-тег
       - name: Create and Push Git Tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
+          git add Cargo.toml
+          git commit -m "Bump version to ${{ env.RELEASE_VERSION }}"
           git tag ${{ env.RELEASE_VERSION }}
           git push origin ${{ env.RELEASE_VERSION }}
+          git push origin main
 
-      # 7. Создаем релиз на GitHub и загружаем бинарник
+      # 8. Создаём релиз и загружаем бинарник
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
