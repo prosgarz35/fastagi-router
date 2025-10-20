@@ -20,6 +20,9 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Clean previous build
+        run: cargo clean
+
       - name: Build release binary
         run: cargo build --release
 
