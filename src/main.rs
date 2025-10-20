@@ -1,5 +1,4 @@
-use asterisk_agi::Agi; // ИСПРАВЛЕНО
-use asterisk_agi::AgiError; // ИСПРАВЛЕНО
+use asterisk_agi as agi; // Используем псевдоним 'agi'
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
@@ -124,7 +123,7 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     make_response(target, outbound_trunk)
 }
 
-fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
+fn send_agi_response(agi: &mut agi::Agi, response: &AgiResponse) -> Result<(), agi::AgiError> {
     let mut buffer = itoa::Buffer::new();
     agi.set_variable(ROUTE_STATUS, response.status)?;
     agi.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
@@ -142,8 +141,8 @@ fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiErr
     Ok(())
 }
 
-fn main() -> Result<(), AgiError> {
-    let mut agi = Agi::new()?;
+fn main() -> Result<(), agi::AgiError> {
+    let mut agi = agi::Agi::new()?;
     let args = agi.read_args()?; 
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
