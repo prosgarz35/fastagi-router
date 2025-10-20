@@ -3,6 +3,8 @@ use std::io::{self, BufRead, Write};
 use itoa;
 use once_cell::sync::Lazy;
 
+// Комментарий
+
 const CITY_PREFIX_U64: u64 = 73843;
 const TEN_BILLION: u64 = 10_000_000_000;
 const ROUTE_STATUS: &str = "ROUTE_STATUS";
