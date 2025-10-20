@@ -1,5 +1,5 @@
-use asterisk_agi as agi;
-use std::{collections::HashMap, io};
+use asterisk_agi::{Agi, AgiError};
+use std::{collections::HashMap};
 use itoa;
 use once_cell::sync::Lazy;
 
@@ -77,12 +77,7 @@ static SHORT_CODE_MAP: Lazy<HashMap<u16, u16>> = Lazy::new(|| {
 });
 
 fn parse_number_with_cleaning(raw_input: &str) -> Option<u64> {
-    raw_input
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse::<u64>()
-        .ok()
+    raw_input.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().ok()
 }
 
 fn normalize_to_7(num_u64: u64) -> u64 {
@@ -98,33 +93,14 @@ fn route_outbound_short(short_code: u16) -> Option<RouteTarget> {
 }
 
 fn route_by_external_number(number: u64) -> Option<RouteTarget> {
-    if let Some(internal_ext) = INBOUND_MAP.get(&number) {
-        Some(RouteTarget::Internal(*internal_ext))
-    } else {
-        Some(RouteTarget::External(number))
-    }
+    INBOUND_MAP.get(&number).copied().map(RouteTarget::Internal).or(Some(RouteTarget::External(number)))
 }
 
 fn make_response(target: Option<RouteTarget>, outbound_trunk: Option<u64>) -> AgiResponse {
     match target {
-        Some(RouteTarget::Internal(_)) => AgiResponse {
-            status: "SUCCESS",
-            is_internal_dest: "TRUE",
-            target,
-            outbound_trunk: None,
-        },
-        Some(RouteTarget::External(_)) => AgiResponse {
-            status: "SUCCESS",
-            is_internal_dest: "FALSE",
-            target,
-            outbound_trunk,
-        },
-        None => AgiResponse {
-            status: "FAILED",
-            is_internal_dest: "FALSE",
-            target: None,
-            outbound_trunk: None,
-        },
+        Some(RouteTarget::Internal(_)) => AgiResponse { status: "SUCCESS", is_internal_dest: "TRUE", target, outbound_trunk: None },
+        Some(RouteTarget::External(_)) => AgiResponse { status: "SUCCESS", is_internal_dest: "FALSE", target, outbound_trunk },
+        None => AgiResponse { status: "FAILED", is_internal_dest: "FALSE", target: None, outbound_trunk: None },
     }
 }
 
@@ -132,42 +108,28 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     let target = match call_type {
         CallType::Inbound => parse_number_with_cleaning(raw_input).and_then(route_inbound),
         CallType::OldShort => raw_input.parse::<u16>().ok().and_then(route_outbound_short),
-        CallType::City6 => raw_input.parse::<u64>().ok()
-            .map(|n| CITY_PREFIX_U64 * 1_000_000 + n)
-            .and_then(route_by_external_number),
-        CallType::FederalPlus => parse_number_with_cleaning(raw_input)
-            .map(normalize_to_7)
-            .and_then(route_by_external_number),
-        CallType::Federal7 => raw_input.parse::<u64>().ok()
-            .and_then(route_by_external_number),
-        CallType::Federal8 => raw_input.parse::<u64>().ok()
-            .map(normalize_to_7)
-            .and_then(route_by_external_number),
+        CallType::City6 => raw_input.parse::<u64>().ok().map(|n| CITY_PREFIX_U64 * 1_000_000 + n).and_then(route_by_external_number),
+        CallType::FederalPlus => parse_number_with_cleaning(raw_input).map(normalize_to_7).and_then(route_by_external_number),
+        CallType::Federal7 => raw_input.parse::<u64>().ok().and_then(route_by_external_number),
+        CallType::Federal8 => raw_input.parse::<u64>().ok().map(normalize_to_7).and_then(route_by_external_number),
         CallType::Unknown => None,
     };
 
-    let mut outbound_trunk: Option<u64> = None;
-    if let Some(RouteTarget::External(_)) = &target {
-        outbound_trunk = OUTBOUND_TRUNK_MAP.get(&caller_id_ext).copied();
-    }
+    let outbound_trunk = match &target {
+        Some(RouteTarget::External(_)) => OUTBOUND_TRUNK_MAP.get(&caller_id_ext).copied(),
+        _ => None,
+    };
 
     make_response(target, outbound_trunk)
 }
 
-fn send_agi_response(
-    agi: &mut agi::Agi<io::Stdin, io::Stdout>,
-    response: &AgiResponse,
-) -> Result<(), io::Error> {
+fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
     let mut buffer = itoa::Buffer::new();
-
     agi.set_variable(ROUTE_STATUS, response.status)?;
     agi.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
-
     if let Some(target) = &response.target {
         match target {
-            RouteTarget::Internal(ext) => {
-                agi.set_variable(TARGET_EXT, buffer.format(*ext))?;
-            }
+            RouteTarget::Internal(ext) => { agi.set_variable(TARGET_EXT, buffer.format(*ext))?; }
             RouteTarget::External(num) => {
                 agi.set_variable(OUT_NUMBER, buffer.format(*num))?;
                 if let Some(trunk) = response.outbound_trunk {
@@ -179,16 +141,12 @@ fn send_agi_response(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut agi = agi::Agi::stdio();
-    let _vars = agi.read_variables()?;
+fn main() -> Result<(), AgiError> {
+    let mut agi = Agi::new()?;
     let args = agi.read_args()?;
-
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
-    let caller_id_ext = args.get(2)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(0);
+    let caller_id_ext = args.get(2).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
 
     let call_type = match call_type_str {
         "inbound" => CallType::Inbound,
