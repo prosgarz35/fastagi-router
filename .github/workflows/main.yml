@@ -14,19 +14,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust toolchain
+        uses: rust-lang/setup-rust@v2
         with:
           toolchain: stable
+          profile: minimal
           override: true
-
-      - name: Clean previous build
-        run: cargo clean
 
       - name: Build release binary
         run: cargo build --release
 
-      - name: Upload binary artifact
+      - name: Upload release binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: fastagi_router
