@@ -1,4 +1,4 @@
-name: Rust Auto Release
+name: Rust Build and Auto Release
 
 on:
   push:
@@ -10,25 +10,25 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # для пуша тегов и создания релиза
+      contents: write # нужно для пуша тега и релиза
 
     steps:
-      # 1. Checkout repository
+      # 1. Checkout repo с полной историей
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # важно для gh release list
+          fetch-depth: 0
 
-      # 2. Setup Rust toolchain
-      - name: Setup Rust
+      # 2. Setup Rust
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 3. Install cargo-edit (для cargo set-version)
+      # 3. Install cargo-edit для set-version
       - name: Install cargo-edit
         run: cargo install cargo-edit
 
-      # 4. Cache Cargo registry and build targets
-      - name: Cache Cargo registry and target
+      # 4. Кэширование registry и target
+      - name: Cache Cargo registry and build targets
         uses: actions/cache@v3
         with:
           path: |
@@ -48,7 +48,7 @@ jobs:
         run: cargo build --release
 
       # 7. Compute next semantic version
-      - name: Compute next semantic version
+      - name: Compute next version and tag
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
@@ -68,38 +68,38 @@ jobs:
               minor=0
               major=$((major+1))
             fi
-            next="v${major}.${minor}.${patch}"
+            next_version="${major}.${minor}.${patch}"
           else
-            next="v0.1.0"
+            next_version="0.1.0"
           fi
 
-          echo "Next release: $next"
-          echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
-          echo "RELEASE_TAG=$next" >> $GITHUB_ENV
+          next_tag="v${next_version}"
+
+          echo "Next version: $next_version"
+          echo "Next tag: $next_tag"
+
+          echo "RELEASE_VERSION=$next_version" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$next_tag" >> $GITHUB_ENV
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 8. Update Cargo.toml version
+      # 8. Update Cargo.toml
       - name: Update Cargo.toml version
         run: cargo set-version ${{ env.RELEASE_VERSION }}
 
-      # 9. Commit Cargo.toml changes
-      - name: Commit Cargo.toml changes
+      # 9. Commit Cargo.toml and push tag
+      - name: Commit and push version bump
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add Cargo.toml
-          git commit -m "Bump version to ${{ env.RELEASE_VERSION }} [skip ci]" || echo "No changes"
-          git push origin main || echo "Nothing to push"
-
-      # 10. Create and push Git tag
-      - name: Create and push Git tag
-        run: |
+          git commit -m "Bump version to ${{ env.RELEASE_VERSION }} [skip ci]" || echo "No changes to commit"
           git tag ${{ env.RELEASE_TAG }}
+          git push origin main
           git push origin ${{ env.RELEASE_TAG }}
 
-      # 11. Create GitHub Release and Upload Binary
-      - name: Create GitHub Release and Upload Binary
+      # 10. Upload release binary
+      - name: Create GitHub Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
           files: target/release/fastagi_router
