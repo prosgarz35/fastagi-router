@@ -10,24 +10,14 @@ const IS_INTERNAL_DEST: &str = "IS_INTERNAL_DEST";
 const TARGET_EXT: &str = "TARGET_EXT";
 const OUT_NUMBER: &str = "OUT_NUMBER";
 const DIAL_TRUNK: &str = "DIAL_TRUNK";
-
-// Версия 0.1.7
+const VERBOSE_LEVEL_WARNING: u8 = 1;
+const VERBOSE_LEVEL_SUCCESS: u8 = 3;
 
 #[derive(Debug)]
-enum RouteTarget {
-    Internal(u16),
-    External(u64),
-}
+enum RouteTarget { Internal(u16), External(u64) }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-enum CallType {
-    Inbound,
-    OldShort,
-    City6,
-    FederalPlus,
-    Federal7,
-    Federal8,
-}
+enum CallType { Inbound, OldShort, City6, FederalPlus, Federal7, Federal8 }
 
 struct AgiResponse {
     status: &'static str,
@@ -38,47 +28,48 @@ struct AgiResponse {
 
 static INBOUND_MAP: Lazy<HashMap<u64, u16>> = Lazy::new(|| {
     HashMap::from([
-        (79235253998, 501), (73843602313, 501),
-        (79235254061, 502), (73843601773, 502), (73843731773, 502),
-        (79235254150, 503),
-        (79235254132, 504), (73843602414, 504),
-        (79235254389, 505),
-        (79235254439, 506), (73843601771, 506),
-        (79235254667, 507), (73843600912, 507),
-        (79235254706, 508), (73843600911, 508), (73843731458, 508),
-        (79235255049, 509), (73843601331, 509), (73843731313, 509),
-        (79235255136, 510), (73843601221, 510), (73843731500, 510),
+        (79235253998, 501), (73843602313, 501), (79235254061, 502), (73843601773, 502), (73843731773, 502),
+        (79235254150, 503), (79235254132, 504), (73843602414, 504), (79235254389, 505), (79235254439, 506),
+        (73843601771, 506), (79235254667, 507), (73843600912, 507), (79235254706, 508), (73843600911, 508),
+        (73843731458, 508), (79235255049, 509), (73843601331, 509), (73843731313, 509), (79235255136, 510),
+        (73843601221, 510), (73843731500, 510),
     ])
 });
 
 static OUTBOUND_TRUNK_MAP: Lazy<HashMap<u16, u64>> = Lazy::new(|| {
     HashMap::from([
-        (501, 79235253998), (502, 79235254061), (503, 79235254150),
-        (504, 79235254132), (505, 79235254389), (506, 79235254439),
-        (507, 79235254667), (508, 79235254706), (509, 79235255049),
-        (510, 79235255136),
+        (501, 79235253998), (502, 79235254061), (503, 79235254150), (504, 79235254132), (505, 79235254389),
+        (506, 79235254439), (507, 79235254667), (508, 79235254706), (509, 79235255049), (510, 79235255136),
     ])
 });
 
 static SHORT_CODE_MAP: Lazy<HashMap<u16, u16>> = Lazy::new(|| {
     HashMap::from([
-        (104, 501), (135, 502), (119, 502),
-        (111, 508), (106, 509),
+        (104, 501), (135, 502), (119, 502), (111, 508), (106, 509),
     ])
 });
 
-fn parse_number_with_cleaning(raw_input: &str) -> Option<u64> {
-    raw_input
+fn parse_and_normalize_to_7(raw_input: &str) -> Option<u64> {
+    let num = raw_input
         .chars()
         .filter(|c| c.is_ascii_digit())
         .collect::<String>()
         .parse::<u64>()
-        .ok()
-        .filter(|&n| n != 0)
-}
-
-fn normalize_to_7(num_u64: u64) -> u64 {
-    7 * TEN_BILLION + (num_u64 % TEN_BILLION)
+        .ok()?;
+    
+    if num == 0 { return None; }
+    
+    if num >= TEN_BILLION {
+        match num / TEN_BILLION {
+            7 => Some(num),
+            8 => Some(7 * TEN_BILLION + (num % TEN_BILLION)),
+            _ => None,
+        }
+    } else if num >= 1_000_000_000 {
+        Some(7 * TEN_BILLION + num)
+    } else {
+        None
+    }
 }
 
 fn route_inbound(trunk_number: u64) -> Option<RouteTarget> {
@@ -96,7 +87,12 @@ fn route_by_external_number(number: u64) -> Option<RouteTarget> {
         .or_else(|| Some(RouteTarget::External(number)))
 }
 
-fn make_response(target: Option<RouteTarget>, outbound_trunk: Option<u64>) -> AgiResponse {
+fn make_response(target: Option<RouteTarget>, caller_ext: u16) -> AgiResponse {
+    let outbound_trunk = match &target {
+        Some(RouteTarget::External(_)) => OUTBOUND_TRUNK_MAP.get(&caller_ext).copied(),
+        _ => None,
+    };
+
     match target {
         Some(RouteTarget::Internal(_)) => AgiResponse {
             status: "SUCCESS",
@@ -121,27 +117,24 @@ fn make_response(target: Option<RouteTarget>, outbound_trunk: Option<u64>) -> Ag
 
 fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> AgiResponse {
     let target = match call_type {
-        CallType::Inbound => parse_number_with_cleaning(raw_input).and_then(route_inbound),
+        CallType::Inbound => parse_and_normalize_to_7(raw_input).and_then(route_inbound),
         CallType::OldShort => raw_input.parse::<u16>().ok().and_then(route_outbound_short),
-        CallType::City6 => raw_input.parse::<u64>().ok()
-            .map(|n| CITY_PREFIX_U64 * 1_000_000 + n)
-            .and_then(route_by_external_number),
-        CallType::FederalPlus => parse_number_with_cleaning(raw_input)
-            .map(normalize_to_7)
-            .and_then(route_by_external_number),
-        CallType::Federal7 => raw_input.parse::<u64>().ok()
-            .and_then(route_by_external_number),
-        CallType::Federal8 => raw_input.parse::<u64>().ok()
-            .map(normalize_to_7)
-            .and_then(route_by_external_number),
+        CallType::City6 => {
+            let cleaned = raw_input
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect::<String>();
+            
+            cleaned.parse::<u64>().ok()
+                .filter(|_| cleaned.len() == 6)
+                .map(|n| CITY_PREFIX_U64 * 1_000_000 + n)
+                .and_then(route_by_external_number)
+        }
+        CallType::FederalPlus | CallType::Federal7 | CallType::Federal8 => 
+            parse_and_normalize_to_7(raw_input).and_then(route_by_external_number),
     };
 
-    let outbound_trunk = match &target {
-        Some(RouteTarget::External(_)) => OUTBOUND_TRUNK_MAP.get(&caller_id_ext).copied(),
-        _ => None,
-    };
-
-    make_response(target, outbound_trunk)
+    make_response(target, caller_id_ext)
 }
 
 fn read_agi_variables() -> HashMap<String, String> {
@@ -170,9 +163,10 @@ fn send_agi_command(command: &str) {
     let mut stdout = io::stdout().lock();
     let _ = writeln!(stdout, "{}", command);
     let _ = stdout.flush();
+    
     let mut stdin = io::stdin().lock();
-    let mut _response = String::new();
-    let _ = stdin.read_line(&mut _response);
+    let mut response = String::new();
+    let _ = stdin.read_line(&mut response);
 }
 
 fn set_variable(name: &str, value: &str) {
@@ -189,8 +183,8 @@ fn answer() {
 
 fn main() {
     if let Err(e) = run_router() {
-        send_agi_command("ANSWER");
-        verbose(&format!("CRITICAL AGI ERROR: {}", e), 1);
+        answer();
+        verbose(&format!("CRITICAL AGI ERROR: {}", e), VERBOSE_LEVEL_WARNING);
     }
 }
 
@@ -212,7 +206,7 @@ fn run_router() -> Result<(), Box<dyn std::error::Error>> {
         "federal_7" => CallType::Federal7,
         "federal_8" => CallType::Federal8,
         _ => {
-            verbose(&format!("WARNING: Unknown call type '{}'", call_type_str), 1);
+            verbose(&format!("WARNING: Unknown call type '{}'", call_type_str), VERBOSE_LEVEL_WARNING);
             set_variable(ROUTE_STATUS, "FAILED");
             set_variable(TARGET_EXT, "0");
             return Ok(());
@@ -229,22 +223,22 @@ fn run_router() -> Result<(), Box<dyn std::error::Error>> {
         match target {
             RouteTarget::Internal(ext) => {
                 set_variable(TARGET_EXT, buffer.format(*ext));
-                verbose(&format!("Route: SUCCESS -> Internal to EXT {}", ext), 3);
+                verbose(&format!("Route: SUCCESS -> Internal to EXT {}", ext), VERBOSE_LEVEL_SUCCESS);
             }
             RouteTarget::External(num) => {
                 set_variable(OUT_NUMBER, buffer.format(*num));
                 if let Some(trunk) = response.outbound_trunk {
                     set_variable(DIAL_TRUNK, buffer.format(trunk));
-                    verbose(&format!("Route: SUCCESS -> External to {} via TRUNK {}", num, trunk), 3);
+                    verbose(&format!("Route: SUCCESS -> External to {} via TRUNK {}", num, trunk), VERBOSE_LEVEL_SUCCESS);
                 } else {
                     set_variable(ROUTE_STATUS, "FAILED");
-                    verbose(&format!("Route: FAILED. External number {} found, but no DIAL_TRUNK for ext {}", num, caller_id_ext), 1);
+                    verbose(&format!("Route: FAILED. External number {} found, but no DIAL_TRUNK for ext {}", num, caller_id_ext), VERBOSE_LEVEL_WARNING);
                 }
             }
         }
     } else {
         set_variable(ROUTE_STATUS, "FAILED");
-        verbose(&format!("Route: FAILED. No destination found for input: {}", raw_input), 1);
+        verbose(&format!("Route: FAILED. No destination found for input: {}", raw_input), VERBOSE_LEVEL_WARNING);
     }
 
     Ok(())
