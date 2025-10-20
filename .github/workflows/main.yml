@@ -10,37 +10,37 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # нужно для создания и пуша тегов
+      contents: write  # Нужно для создания тегов и релизов
 
     steps:
-      # 1. Checkout репозитория с полной историей
+      # 1. Checkout full history
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Устанавливаем Rust
+      # 2. Setup Rust
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 2a. Устанавливаем cargo-edit (для cargo set-version)
+      # 3. Install cargo-edit (для cargo set-version)
       - name: Install cargo-edit
         run: cargo install cargo-edit
 
-      # 3. Запускаем тесты
+      # 4. Run tests
       - name: Run tests
         run: cargo test --release
 
-      # 4. Собираем бинарник release
+      # 5. Build release binary
       - name: Build release binary
         run: cargo build --release
 
-      # 5. Определяем следующую версию релиза
+      # 6. Determine next release version
       - name: Get next release version
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
-          echo "Latest release: $latest"
+          echo "Latest release tag: $latest"
           if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             major="${BASH_REMATCH[1]}"
             minor="${BASH_REMATCH[2]}"
@@ -54,35 +54,42 @@ jobs:
               minor=0
               major=$((major + 1))
             fi
-            next="v${major}.${minor}.${patch}"
+            next_tag="v${major}.${minor}.${patch}"
+            next_version="${major}.${minor}.${patch}"
           else
-            next="v0.1.0"
+            next_tag="v0.1.0"
+            next_version="0.1.0"
           fi
-          echo "Next release: $next"
-          echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
+          echo "Next release tag: $next_tag"
+          echo "Next Cargo.toml version: $next_version"
+          echo "RELEASE_TAG=$next_tag" >> $GITHUB_ENV
+          echo "RELEASE_VERSION=$next_version" >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6. Обновляем версию в Cargo.toml через cargo set-version
+      # 7. Update Cargo.toml
       - name: Update Cargo.toml version
-        run: cargo set-version ${{ env.RELEASE_VERSION }} 
+        run: cargo set-version ${{ env.RELEASE_VERSION }}
 
-      # 7. Создаём и пушим git-тег
-      - name: Create and Push Git Tag
+      # 8. Commit Cargo.toml changes and push tag (с защитой от бесконечного цикла)
+      - name: Commit and push version bump
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add Cargo.toml
-          git commit -m "Bump version to ${{ env.RELEASE_VERSION }}"
-          git tag ${{ env.RELEASE_VERSION }}
-          git push origin ${{ env.RELEASE_VERSION }}
+          # Добавляем [skip ci], чтобы не зациклить workflow
+          git commit -m "Bump version to ${{ env.RELEASE_VERSION }} [skip ci]" || echo "No changes to commit"
+          git tag ${{ env.RELEASE_TAG }}
           git push origin main
+          git push origin ${{ env.RELEASE_TAG }}
 
-      # 8. Создаём релиз и загружаем бинарник
+      # 9. Create GitHub release and upload binary
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
           files: target/release/fastagi_router
-          name: Release ${{ env.RELEASE_VERSION }}
-          tag_name: ${{ env.RELEASE_VERSION }}
+          name: Release ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
         env:
