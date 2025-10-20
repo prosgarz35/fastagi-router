@@ -1,5 +1,6 @@
-use agi::Agi;
-use std::{collections::HashMap, io}; // Используем стандартный io::Error
+use asterisk_agi::agi::Agi; 
+use asterisk_agi::error::AgiError; // Мы пробуем этот путь для AgiError
+use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
 
@@ -36,7 +37,6 @@ struct AgiResponse {
     outbound_trunk: Option<u64>,
 }
 
-// Статические карты (без изменений)
 static INBOUND_MAP: Lazy<HashMap<u64, u16>> = Lazy::new(|| {
     HashMap::from([
         (79235253998, 501), (73843602313, 501),
@@ -77,7 +77,6 @@ static SHORT_CODE_MAP: Lazy<HashMap<u16, u16>> = Lazy::new(|| {
     ])
 });
 
-// Функции маршрутизации (без изменений)
 fn parse_number_with_cleaning(raw_input: &str) -> Option<u64> {
     raw_input.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().ok()
 }
@@ -125,8 +124,7 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     make_response(target, outbound_trunk)
 }
 
-// Отправка переменных: теперь возвращает io::Result<()>
-fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> io::Result<()> {
+fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
     let mut buffer = itoa::Buffer::new();
     agi.set_variable(ROUTE_STATUS, response.status)?;
     agi.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
@@ -144,18 +142,9 @@ fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> io::Result<()> {
     Ok(())
 }
 
-// Главная функция: теперь возвращает io::Result<()>
-fn main() -> io::Result<()> {
-    // Используем stdio() для ранних версий
-    let mut agi = Agi::stdio();
-    
-    // В ранних версиях, возможно, нет метода read_args(),
-    // но есть read_variables(). Мы будем полагаться на то, что аргументы
-    // можно получить через read_variables(), как это было принято ранее.
-    // Если read_args() существует, код будет работать, если нет, 
-    // вам придется вручную парсить переменные.
+fn main() -> Result<(), AgiError> {
+    let mut agi = Agi::new()?;
     let args = agi.read_args()?; 
-    
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
     let caller_id_ext = args.get(2).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
