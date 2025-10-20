@@ -1,4 +1,4 @@
-name: Rust Build & Auto Release (Super Optimized Cache)
+name: Rust Build and Auto Release
 
 on:
   push:
@@ -10,86 +10,85 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Для Git-операций и создания релиза
 
     steps:
-      # 1. Checkout
+      # === ИНИЦИАЛИЗАЦИЯ И НАСТРОЙКА ===
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Setup Rust
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # 3. Install cargo-edit
       - name: Install cargo-edit
         run: cargo install cargo-edit
 
-      # 4. Cache Cargo registry and git sources
-      - name: Cache Cargo registry & git
+      # === КЭШИРОВАНИЕ ДЕПЕНДЕНСЕЙ ===
+      - name: Cache Cargo dependencies and target
         uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+            ${{ runner.os }}-cargo-
 
-      # 5. Cache compiled dependencies only (target/deps)
-      - name: Cache compiled dependencies
-        uses: actions/cache@v3
-        with:
-          path: target/deps
-          key: ${{ runner.os }}-cargo-deps-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-deps-
-
-      # 6. Run tests
+      # === СБОРКА И ТЕСТИРОВАНИЕ ===
       - name: Run tests
         run: cargo test --release
 
-      # 7. Build release binary (fresh)
       - name: Build release binary
         run: cargo build --release
 
-      # 8. Determine next version
+      # === ВЕРСИОНИРОВАНИЕ ===
       - name: Get next release version
         id: get_version
         run: |
           latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
           echo "Latest release: $latest"
+          
           if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
             major="${BASH_REMATCH[1]}"
             minor="${BASH_REMATCH[2]}"
             patch="${BASH_REMATCH[3]}"
-            patch=$((patch+1))
-            if [ $patch -gt 9 ]; then
+            
+            # Логика инкремента патча
+            if [ "$patch" -lt 9 ]; then
+              patch=$((patch+1))
+            else
               patch=0
-              minor=$((minor+1))
+              if [ "$minor" -lt 9 ]; then
+                minor=$((minor+1))
+              else
+                minor=0
+                major=$((major+1))
+              fi
             fi
-            if [ $minor -gt 9 ]; then
-              minor=0
-              major=$((major+1))
-            fi
-            next="${major}.${minor}.${patch}"
           else
-            next="0.1.0"
+            major=0
+            minor=1
+            patch=0
           fi
+
+          next="v${major}.${minor}.${patch}"
           echo "Next release: $next"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
-          echo "RELEASE_TAG=v$next" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$next" >> $GITHUB_ENV
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 9. Bump Cargo.toml version
-      - name: Bump Cargo version
-        run: cargo set-version ${{ env.RELEASE_VERSION }} --allow-dirty
+      - name: Update Cargo.toml version
+        run: |
+          ver=${{ env.RELEASE_VERSION }}
+          ver=${ver#v} # Убираем префикс v
+          cargo set-version $ver
 
-      # 10. Commit Cargo.toml and push tag
-      - name: Commit and push version bump
+      # === КОММИТ И ПУШ ТЕГА ===
+      - name: Commit Cargo.toml and push tag
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
@@ -99,12 +98,12 @@ jobs:
           git push origin main
           git push origin ${{ env.RELEASE_TAG }}
 
-      # 11. Create GitHub Release and upload binary
+      # === СОЗДАНИЕ РЕЛИЗА ===
       - name: Create GitHub Release and Upload Binary
         uses: softprops/action-gh-release@v1
         with:
           files: target/release/fastagi_router
-          name: Release ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_VERSION }}
           tag_name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
