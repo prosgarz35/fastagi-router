@@ -158,6 +158,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    set_verbose("AGI Router executed", 1)?; // исправлено
+    verbose("AGI Router executed", 1)?; // Поправил я
     Ok(())
 }
