@@ -1,5 +1,4 @@
-use asterisk_agi::Agi;
-use asterisk_agi::error::AgiError;
+use asterisk_agi::agi::{Agi, AgiError}; // ИСПРАВЛЕНО
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
@@ -143,13 +142,8 @@ fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiErr
 }
 
 fn main() -> Result<(), AgiError> {
-    // В зависимости от версии крейта, Agi::new() может быть не реализован. 
-    // Если возникнет ошибка, вернитесь к Agi::stdio()?.
-    let mut agi = Agi::new()?; 
-    
-    // Удаляем чтение переменных, так как нам нужны только аргументы.
+    let mut agi = Agi::new()?;
     let args = agi.read_args()?; 
-    
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
     let caller_id_ext = args.get(2).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
