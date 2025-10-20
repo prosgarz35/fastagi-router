@@ -1,5 +1,4 @@
-use asterisk_agi::agi::Agi; 
-use asterisk_agi::error::AgiError; // Мы пробуем этот путь для AgiError
+use asterisk_agi as agi; // Единственный рабочий способ
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
@@ -124,17 +123,18 @@ fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> A
     make_response(target, outbound_trunk)
 }
 
-fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiError> {
+// Изменяем сигнатуру, используя полные пути через псевдоним 'agi'
+fn send_agi_response(agi_obj: &mut agi::Agi, response: &AgiResponse) -> Result<(), agi::AgiError> {
     let mut buffer = itoa::Buffer::new();
-    agi.set_variable(ROUTE_STATUS, response.status)?;
-    agi.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
+    agi_obj.set_variable(ROUTE_STATUS, response.status)?;
+    agi_obj.set_variable(IS_INTERNAL_DEST, response.is_internal_dest)?;
     if let Some(target) = &response.target {
         match target {
-            RouteTarget::Internal(ext) => { agi.set_variable(TARGET_EXT, buffer.format(*ext))?; }
+            RouteTarget::Internal(ext) => { agi_obj.set_variable(TARGET_EXT, buffer.format(*ext))?; }
             RouteTarget::External(num) => {
-                agi.set_variable(OUT_NUMBER, buffer.format(*num))?;
+                agi_obj.set_variable(OUT_NUMBER, buffer.format(*num))?;
                 if let Some(trunk) = response.outbound_trunk {
-                    agi.set_variable(DIAL_TRUNK, buffer.format(trunk))?;
+                    agi_obj.set_variable(DIAL_TRUNK, buffer.format(trunk))?;
                 }
             }
         }
@@ -142,9 +142,10 @@ fn send_agi_response(agi: &mut Agi, response: &AgiResponse) -> Result<(), AgiErr
     Ok(())
 }
 
-fn main() -> Result<(), AgiError> {
-    let mut agi = Agi::new()?;
-    let args = agi.read_args()?; 
+// Изменяем главную функцию
+fn main() -> Result<(), agi::AgiError> {
+    let mut agi_obj = agi::Agi::new()?;
+    let args = agi_obj.read_args()?; 
     let raw_input = args.get(0).map(|s| s.as_str()).unwrap_or_default();
     let call_type_str = args.get(1).map(|s| s.as_str()).unwrap_or("unknown");
     let caller_id_ext = args.get(2).and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
@@ -160,6 +161,6 @@ fn main() -> Result<(), AgiError> {
     };
 
     let response = dispatch_route(raw_input, caller_id_ext, call_type);
-    send_agi_response(&mut agi, &response)?;
+    send_agi_response(&mut agi_obj, &response)?;
     Ok(())
 }
