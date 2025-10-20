@@ -1,4 +1,4 @@
-use agi;
+use asterisk_agi as agi;
 use std::{collections::HashMap, io};
 use itoa;
 use once_cell::sync::Lazy;
@@ -131,24 +131,18 @@ fn make_response(target: Option<RouteTarget>, outbound_trunk: Option<u64>) -> Ag
 fn dispatch_route(raw_input: &str, caller_id_ext: u16, call_type: CallType) -> AgiResponse {
     let target = match call_type {
         CallType::Inbound => parse_number_with_cleaning(raw_input).and_then(route_inbound),
-        
         CallType::OldShort => raw_input.parse::<u16>().ok().and_then(route_outbound_short),
-        
         CallType::City6 => raw_input.parse::<u64>().ok()
             .map(|n| CITY_PREFIX_U64 * 1_000_000 + n)
             .and_then(route_by_external_number),
-        
         CallType::FederalPlus => parse_number_with_cleaning(raw_input)
             .map(normalize_to_7)
             .and_then(route_by_external_number),
-        
         CallType::Federal7 => raw_input.parse::<u64>().ok()
             .and_then(route_by_external_number),
-        
         CallType::Federal8 => raw_input.parse::<u64>().ok()
             .map(normalize_to_7)
             .and_then(route_by_external_number),
-        
         CallType::Unknown => None,
     };
 
