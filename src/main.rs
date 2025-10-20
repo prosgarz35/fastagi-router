@@ -1,4 +1,4 @@
-use asterisk_agi::{AgiClient as Agi, AgiError}; // Adjusted import based on common AGI crate pattern
+use asterisk_agi::agi::{Agi, AgiError}; // Hypothetical module path, adjust based on crate docs
 use std::collections::HashMap;
 use itoa;
 use once_cell::sync::Lazy;
