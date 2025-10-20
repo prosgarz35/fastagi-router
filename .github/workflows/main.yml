@@ -10,7 +10,7 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Для Git-операций и создания релиза
+      contents: write # Для Git-операций, создания и удаления релиза/тегов
 
     steps:
       # === ИНИЦИАЛИЗАЦИЯ И НАСТРОЙКА ===
@@ -87,7 +87,26 @@ jobs:
           ver=${ver#v} # Убираем префикс v
           cargo set-version $ver
 
-      # === КОММИТ И ПУШ ТЕГА ===
+      # === НОВЫЙ БЛОК: УДАЛЕНИЕ СТАРЫХ РЕЛИЗОВ ===
+      - name: Delete all previous releases and tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking for old releases to delete..."
+          # Получаем список тегов, кроме нового RELEASE_TAG
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read tag; do
+            if [ "$tag" != "${{ env.RELEASE_TAG }}" ]; then
+              echo "Deleting old release and tag: $tag"
+              
+              # Удаляем сам релиз
+              gh release delete "$tag" --yes || echo "Release $tag not found or already deleted."
+              
+              # Удаляем соответствующий Git-тег
+              git push --delete origin "$tag" || true
+            fi
+          done
+
+      # === КОММИТ И ПУШ НОВОГО ТЕГА ===
       - name: Commit Cargo.toml and push tag
         run: |
           git config user.name github-actions
@@ -98,11 +117,11 @@ jobs:
           git push origin main
           git push origin ${{ env.RELEASE_TAG }}
 
-      # === СОЗДАНИЕ РЕЛИЗА ===
+      # === СОЗДАНИЕ НОВОГО РЕЛИЗА (Только бинарник) ===
       - name: Create GitHub Release and Upload Binary
         uses: softprops/action-gh-release@v1
         with:
-          files: target/release/fastagi_router
+          files: target/release/fastagi_router # Загружается только этот файл
           name: Release ${{ env.RELEASE_VERSION }}
           tag_name: ${{ env.RELEASE_TAG }}
           draft: false
