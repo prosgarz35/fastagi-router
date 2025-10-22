@@ -60,22 +60,41 @@ fn main() {
         println!("SET VARIABLE DIAL_TRUNK {}", t);
     }
 
-    let (is_internal, target): (bool, String) = if dial_s.len() == 3 {
-        if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
-            (true, ext.to_string())
-        } else {
-            (false, dial_s.clone())
+    let (is_internal, target): (bool, String) = match dial_s.len() {
+        3 => {
+            if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
+                (true, ext.to_string())
+            } else {
+                (false, dial_s.clone())
+            }
         }
-    } else {
-        let normalized = match dial_s.len() {
-            6 => format!("73843{}", dial_s),
-            11 if dial_s.starts_with('8') => format!("7{}", &dial_s[1..]),
-            _ => dial_s.clone(),
-        };
-        if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
-            (true, ext.to_string())
-        } else {
-            (false, normalized)
+
+        6 => {
+            let normalized = format!("73843{}", dial_s);
+            if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
+                (true, ext.to_string())
+            } else {
+                (false, normalized)
+            }
+        }
+
+        11 => {
+            let normalized = if dial_s.starts_with('8') {
+                format!("7{}", &dial_s[1..])
+            } else {
+                dial_s.clone()
+            }
+            ;
+            
+            if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
+                (true, ext.to_string())
+            } else {
+                (false, normalized)
+            }
+        }
+
+        _ => {
+            (false, dial_s.clone())
         }
     };
 
@@ -83,11 +102,19 @@ fn main() {
         println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
         println!("SET VARIABLE IS_INTERNAL_DEST TRUE");
         println!("SET VARIABLE DIAL_TARGET {}", target);
-    } else if dial_s.len() == 3 {
-        println!("SET VARIABLE LOOKUP_SUCCESS FALSE");
     } else {
-        println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
-        println!("SET VARIABLE IS_INTERNAL_DEST FALSE");
-        println!("SET VARIABLE DIAL_TARGET {}", target);
+        let should_reject = match dial_s.len() {
+            3 => true,
+            6 | 11 => false,
+            _ => true,
+        };
+        
+        if should_reject {
+            println!("SET VARIABLE LOOKUP_SUCCESS FALSE");
+        } else {
+            println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
+            println!("SET VARIABLE IS_INTERNAL_DEST FALSE");
+            println!("SET VARIABLE DIAL_TARGET {}", target);
+        }
     }
 }
