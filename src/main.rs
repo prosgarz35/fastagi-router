@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{self, BufRead};
+use std::io::{self};
 use phf::phf_map;
 
 static NUMBER_TO_EXT: phf::Map<&str, &str> = phf_map! {
@@ -23,12 +23,12 @@ fn main() {
     let stdin = io::stdin();
 
     for line in stdin.lines() {
-        match line {
-            Ok(l) if l.trim().is_empty() => break,
-            Ok(l) => if let Some((k, v)) = l.split_once(':') {
-                vars.insert(k.trim().to_string(), v.trim().to_string());
-            },
-            _ => break,
+        let l = line.unwrap();
+        if l.trim().is_empty() {
+            break;
+        }
+        if let Some((k, v)) = l.split_once(':') {
+            vars.insert(k.trim().to_string(), v.trim().to_string());
         }
     }
 
@@ -60,17 +60,23 @@ fn main() {
         println!("SET VARIABLE DIAL_TRUNK {}", t);
     }
 
-    let (is_internal, target) = if dial_s.len() == 3 {
-        NUMBER_TO_EXT.get(dial_s.as_str())
-            .map_or((false, dial_s.as_str()), |&ext| (true, ext))
+    let (is_internal, target): (bool, String) = if dial_s.len() == 3 {
+        if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
+            (true, ext.to_string())
+        } else {
+            (false, dial_s.clone())
+        }
     } else {
         let normalized = match dial_s.len() {
             6 => format!("73843{}", dial_s),
             11 if dial_s.starts_with('8') => format!("7{}", &dial_s[1..]),
             _ => dial_s.clone(),
         };
-        NUMBER_TO_EXT.get(normalized.as_str())
-            .map_or((false, normalized.as_str()), |&ext| (true, ext))
+        if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
+            (true, ext.to_string())
+        } else {
+            (false, normalized)
+        }
     };
 
     if is_internal {
