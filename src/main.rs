@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::io::{self};
+use std::io::{self, BufRead, Write};
 use phf::phf_map;
 
-static NUMBER_TO_EXT: phf::Map<&str, &str> = phf_map! {
+static NUMBER_TO_EXT: phf::Map<&'static str, &'static str> = phf_map! {
     "79235253998"=>"501","79235254061"=>"502","79235254150"=>"503","79235254132"=>"504",
     "79235254389"=>"505","79235254439"=>"506","79235254667"=>"507","79235254706"=>"508",
     "79235255049"=>"509","79235255136"=>"510","73843602313"=>"501","73843601773"=>"502",
@@ -12,21 +12,60 @@ static NUMBER_TO_EXT: phf::Map<&str, &str> = phf_map! {
     "111"=>"508","106"=>"509"
 };
 
-static EXT_TO_TRUNK: phf::Map<&str, &str> = phf_map! {
+static EXT_TO_TRUNK: phf::Map<&'static str, &'static str> = phf_map! {
     "501"=>"79235253998","502"=>"79235254061","503"=>"79235254150","504"=>"79235254132",
     "505"=>"79235254389","506"=>"79235254439","507"=>"79235254667","508"=>"79235254706",
     "509"=>"79235255049","510"=>"79235255136"
 };
 
-fn main() {
+fn set_var(name: &str, value: &str) {
+    println!("SET VARIABLE {} \"{}\"", name, value);
+    let _ = io::stdout().flush();
+}
+
+fn set_failure_with_reason(reason: &str) {
+    set_var("LOOKUP_SUCCESS", "FALSE");
+    set_var("IS_INTERNAL_DEST", "FALSE");
+    set_var("DIAL_TARGET", "");
+    set_var("LOOKUP_REASON", reason);
+}
+
+fn set_success_internal(target: &str) {
+    set_var("LOOKUP_SUCCESS", "TRUE");
+    set_var("IS_INTERNAL_DEST", "TRUE");
+    set_var("DIAL_TARGET", target);
+}
+
+fn set_success_external(target: &str) {
+    set_var("LOOKUP_SUCCESS", "TRUE");
+    set_var("IS_INTERNAL_DEST", "FALSE");
+    set_var("DIAL_TARGET", target);
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars().filter(char::is_ascii_digit).collect()
+}
+
+fn normalize_number(dial_s: &str) -> Option<String> {
+    match dial_s.len() {
+        3 => Some(dial_s.to_string()),
+        6 => Some(format!("73843{}", dial_s)),
+        11 => match dial_s.chars().next() {
+            Some('8') => Some(format!("7{}", &dial_s[1..])),
+            Some('7') => Some(dial_s.to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn main() -> io::Result<()> {
     let mut vars = HashMap::new();
     let stdin = io::stdin();
 
-    for line in stdin.lines() {
-        let l = line.unwrap();
-        if l.trim().is_empty() {
-            break;
-        }
+    for line in stdin.lock().lines() {
+        let l = line?;
+        if l.trim().is_empty() { break; }
         if let Some((k, v)) = l.split_once(':') {
             vars.insert(k.trim().to_string(), v.trim().to_string());
         }
@@ -36,85 +75,49 @@ fn main() {
     let caller = vars.get("agi_arg_2").map(|s| s.as_str()).unwrap_or("");
     let mode = vars.get("agi_arg_3").map(|s| s.as_str()).unwrap_or("outbound");
 
-    if dialed.is_empty() {
-        println!("SET VARIABLE LOOKUP_SUCCESS FALSE");
-        return;
+    if mode != "inbound" && mode != "outbound" {
+        set_failure_with_reason("invalid_mode");
+        return Ok(());
     }
 
-    let sanitize = |s: &str| s.chars().filter(char::is_ascii_digit).collect::<String>();
     let dial_s = sanitize(dialed);
     let caller_s = sanitize(caller);
 
+    if dial_s.is_empty() {
+        set_failure_with_reason("empty_dial");
+        return Ok(());
+    }
+
     if mode == "inbound" {
         if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
-            println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
-            println!("SET VARIABLE IS_INTERNAL_DEST TRUE");
-            println!("SET VARIABLE DIAL_TARGET {}", ext);
+            set_success_internal(ext);
         } else {
-            println!("SET VARIABLE LOOKUP_SUCCESS FALSE");
+            set_failure_with_reason("unknown_inbound_did");
         }
-        return;
+        return Ok(());
     }
-
+    
     if let Some(&t) = EXT_TO_TRUNK.get(caller_s.as_str()) {
-        println!("SET VARIABLE DIAL_TRUNK {}", t);
+        set_var("DIAL_TRUNK", t);
     }
 
-    let (is_internal, target): (bool, String) = match dial_s.len() {
-        3 => {
-            if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
-                (true, ext.to_string())
-            } else {
-                (false, dial_s.clone())
-            }
-        }
-
-        6 => {
-            let normalized = format!("73843{}", dial_s);
-            if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
-                (true, ext.to_string())
-            } else {
-                (false, normalized)
-            }
-        }
-
-        11 => {
-            let normalized = if dial_s.starts_with('8') {
-                format!("7{}", &dial_s[1..])
-            } else {
-                dial_s.clone()
-            }
-            ;
-            
-            if let Some(&ext) = NUMBER_TO_EXT.get(normalized.as_str()) {
-                (true, ext.to_string())
-            } else {
-                (false, normalized)
-            }
-        }
-
-        _ => {
-            (false, dial_s.clone())
+    let normalized = match normalize_number(&dial_s) {
+        Some(n) => n,
+        None => {
+            set_failure_with_reason("normalize_failed_wrong_length");
+            return Ok(());
         }
     };
 
-    if is_internal {
-        println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
-        println!("SET VARIABLE IS_INTERNAL_DEST TRUE");
-        println!("SET VARIABLE DIAL_TARGET {}", target);
+    if let Some(&ext) = NUMBER_TO_EXT.get(&normalized) {
+        set_success_internal(ext);
     } else {
-        let should_reject = match dial_s.len() {
-            3 => true,
-            6 | 11 => false,
-            _ => true,
-        };
-        
-        if should_reject {
-            println!("SET VARIABLE LOOKUP_SUCCESS FALSE");
+        if dial_s.len() == 3 {
+            set_failure_with_reason("short_internal_rejected");
         } else {
-            println!("SET VARIABLE LOOKUP_SUCCESS TRUE");
-            println!("SET VARIABLE IS_INTERNAL_DEST FALSE");
-            println!("SET VARIABLE DIAL_TARGET {}", target);
+            set_success_external(&normalized);
         }
     }
+
+    Ok(())
 }
