@@ -1,6 +1,10 @@
-use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::{
+    borrow::Cow, 
+    io::{self, BufRead, Write, stdout, StdoutLock}
+};
 use phf::phf_map;
+
+const SIX_DIGIT_PREFIX: &str = "73843";
 
 static NUMBER_TO_EXT: phf::Map<&'static str, &'static str> = phf_map! {
     "79235253998"=>"501","79235254061"=>"502","79235254150"=>"503","79235254132"=>"504",
@@ -18,106 +22,151 @@ static EXT_TO_TRUNK: phf::Map<&'static str, &'static str> = phf_map! {
     "509"=>"79235255049","510"=>"79235255136"
 };
 
-fn set_var(name: &str, value: &str) {
-    println!("SET VARIABLE {} \"{}\"", name, value);
-    let _ = io::stdout().flush();
+fn set_var<W: Write>(w: &mut W, name: &str, value: &str) -> io::Result<()> {
+    writeln!(w, "SET VARIABLE {} \"{}\"", name, value)?;
+    w.flush()
 }
 
-fn set_failure_with_reason(reason: &str) {
-    set_var("LOOKUP_SUCCESS", "FALSE");
-    set_var("IS_INTERNAL_DEST", "FALSE");
-    set_var("DIAL_TARGET", "");
-    set_var("LOOKUP_REASON", reason);
+enum LookupStatus<'a> {
+    Internal(&'a str),
+    External(&'a str),
+    Failure(&'a str),
 }
 
-fn set_success_internal(target: &str) {
-    set_var("LOOKUP_SUCCESS", "TRUE");
-    set_var("IS_INTERNAL_DEST", "TRUE");
-    set_var("DIAL_TARGET", target);
+impl<'a> LookupStatus<'a> {
+    fn into_parts(self) -> (&'static str, &'static str, &'a str, &'a str) {
+        match self {
+            Self::Internal(t) => ("TRUE", "TRUE", t, ""),
+            Self::External(t) => ("TRUE", "FALSE", t, ""),
+            Self::Failure(r) => ("FALSE", "FALSE", "", r),
+        }
+    }
 }
 
-fn set_success_external(target: &str) {
-    set_var("LOOKUP_SUCCESS", "TRUE");
-    set_var("IS_INTERNAL_DEST", "FALSE");
-    set_var("DIAL_TARGET", target);
+fn set_lookup<W: Write>(status: LookupStatus, w: &mut W) -> io::Result<()> {
+    let (succ, internal, target, reason) = status.into_parts();
+    set_var(w, "LOOKUP_SUCCESS", succ)?;
+    set_var(w, "IS_INTERNAL_DEST", internal)?;
+    set_var(w, "DIAL_TARGET", target)?;
+    if succ == "FALSE" { set_var(w, "LOOKUP_REASON", reason)?; }
+    Ok(())
 }
 
-fn sanitize(s: &str) -> String {
-    s.chars().filter(char::is_ascii_digit).collect()
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode { Inbound, Outbound }
+
+impl Mode {
+    fn from_str(s: &str) -> Self {
+        match s { "inbound" => Self::Inbound, _ => Self::Outbound }
+    }
 }
 
-fn normalize_number(dial_s: &str) -> Option<String> {
-    match dial_s.len() {
-        3 => Some(dial_s.to_string()),
-        6 => Some(format!("73843{}", dial_s)),
-        11 => match dial_s.chars().next() {
-            Some('8') => Some(format!("7{}", &dial_s[1..])),
-            Some('7') => Some(dial_s.to_string()),
-            _ => None,
-        },
+struct AgiVars { dialed: String, caller: String, mode: Mode }
+
+impl AgiVars {
+    fn from_stdin() -> io::Result<Self> {
+        let mut dialed = String::new();
+        let mut caller = String::new();
+        let mut mode = Mode::Outbound;
+
+        for line in io::stdin().lock().lines() {
+            let l = line?.trim();
+            if l.is_empty() { break; }
+            if let Some((k, v)) = l.split_once(':') {
+                let v = v.trim();
+                match k.trim() {
+                    "agi_arg_1" => dialed = v.to_owned(),
+                    "agi_arg_2" => caller = v.to_owned(),
+                    "agi_arg_3" => mode = Mode::from_str(v),
+                    _ => {}
+                }
+            }
+        }
+        Ok(Self { dialed, caller, mode })
+    }
+}
+
+fn just_sanitize(s: &str) -> Option<Cow<'_, str>> {
+    let digits = if s.chars().all(char::is_ascii_digit) {
+        Cow::Borrowed(s)
+    } else {
+        Cow::Owned(s.chars().filter(char::is_ascii_digit).collect())
+    };
+    (!digits.is_empty()).then_some(digits)
+}
+
+fn sanitize_and_normalize(s: &str) -> Option<Cow<'_, str>> {
+    let digits = just_sanitize(s)?;
+    match digits.len() {
+        3 => Some(digits),
+        6 => {
+            let mut n = String::with_capacity(SIX_DIGIT_PREFIX.len() + 6);
+            n.push_str(SIX_DIGIT_PREFIX);
+            n.push_str(&digits);
+            Some(Cow::Owned(n))
+        }
+        11 => {
+            let first = digits.as_bytes()[0];
+            if first == b'7' { Some(digits) }
+            else if first == b'8' {
+                let mut n = String::with_capacity(11);
+                n.push('7');
+                n.push_str(&digits[1..]);
+                Some(Cow::Owned(n))
+            } else { None }
+        }
         _ => None,
     }
 }
 
-fn main() -> io::Result<()> {
-    let mut vars = HashMap::new();
-    let stdin = io::stdin();
-
-    for line in stdin.lock().lines() {
-        let l = line?;
-        if l.trim().is_empty() { break; }
-        if let Some((k, v)) = l.split_once(':') {
-            vars.insert(k.trim().to_string(), v.trim().to_string());
+fn handle_outbound<'a, W: Write>(vars: AgiVars, w: &mut W) -> io::Result<LookupStatus<'a>> {
+    if let Some(caller) = just_sanitize(&vars.caller) {
+        if caller.len() == 3 {
+            if let Some(&trunk) = EXT_TO_TRUNK.get(&caller) {
+                set_var(w, "DIAL_TRUNK", trunk)?;
+            }
         }
     }
 
-    let dialed = vars.get("agi_arg_1").map(|s| s.as_str()).unwrap_or("");
-    let caller = vars.get("agi_arg_2").map(|s| s.as_str()).unwrap_or("");
-    let mode = vars.get("agi_arg_3").map(|s| s.as_str()).unwrap_or("outbound");
-
-    if mode != "inbound" && mode != "outbound" {
-        set_failure_with_reason("invalid_mode");
-        return Ok(());
-    }
-
-    let dial_s = sanitize(dialed);
-    let caller_s = sanitize(caller);
-
-    if dial_s.is_empty() {
-        set_failure_with_reason("empty_dial");
-        return Ok(());
-    }
-
-    if mode == "inbound" {
-        if let Some(&ext) = NUMBER_TO_EXT.get(dial_s.as_str()) {
-            set_success_internal(ext);
-        } else {
-            set_failure_with_reason("unknown_inbound_did");
-        }
-        return Ok(());
-    }
-    
-    if let Some(&t) = EXT_TO_TRUNK.get(caller_s.as_str()) {
-        set_var("DIAL_TRUNK", t);
-    }
-
-    let normalized = match normalize_number(&dial_s) {
-        Some(n) => n,
-        None => {
-            set_failure_with_reason("normalize_failed_wrong_length");
-            return Ok(());
-        }
+    let normalized = match sanitize_and_normalize(&vars.dialed).ok_or(
+        LookupStatus::Failure("normalize_failed_wrong_length"),
+    ) {
+        Ok(n) => n,
+        Err(status) => return Ok(status),
     };
 
-    if let Some(&ext) = NUMBER_TO_EXT.get(&normalized) {
-        set_success_internal(ext);
-    } else {
-        if dial_s.len() == 3 {
-            set_failure_with_reason("short_internal_rejected");
+    Ok(match NUMBER_TO_EXT.get(&normalized) {
+        Some(&ext) => LookupStatus::Internal(ext),
+        None => if normalized.len() == 3 {
+            LookupStatus::Failure("short_internal_rejected")
         } else {
-            set_success_external(&normalized);
-        }
-    }
+            LookupStatus::External(&normalized)
+        },
+    })
+}
 
-    Ok(())
+fn run_lookup<W: Write>(vars: AgiVars, w: &mut W) -> io::Result<()> {
+    let status = match vars.mode {
+        Mode::Outbound => handle_outbound(vars, w)?,
+        Mode::Inbound => {
+            let dialed = match just_sanitize(&vars.dialed) {
+                None => {
+                    set_lookup(LookupStatus::Failure("empty_dial"), w)?;
+                    return Ok(());
+                }
+                Some(d) => d,
+            };
+            match NUMBER_TO_EXT.get(&dialed) {
+                Some(&ext) => LookupStatus::Internal(ext),
+                None => LookupStatus::Failure("unknown_inbound_did"),
+            }
+        }
+    };
+    set_lookup(status, w)
+}
+
+fn main() -> io::Result<()> {
+    let mut out = stdout().lock();
+    let vars = AgiVars::from_stdin()?;
+    run_lookup(vars, &mut out)
 }
