@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow, 
-    io::{self, BufRead, Write, stdout, StdoutLock}
+    io::{self, BufRead, Write, stdout},
 };
 use phf::phf_map;
 
@@ -29,25 +29,26 @@ fn set_var<W: Write>(w: &mut W, name: &str, value: &str) -> io::Result<()> {
 
 enum LookupStatus<'a> {
     Internal(&'a str),
-    External(&'a str),
+    External(String),
     Failure(&'a str),
 }
 
 impl<'a> LookupStatus<'a> {
-    fn into_parts(self) -> (&'static str, &'static str, &'a str, &'a str) {
+    fn into_parts(self) -> (&'static str, &'static str, Cow<'a, str>, &'a str) {
         match self {
-            Self::Internal(t) => ("TRUE", "TRUE", t, ""),
-            Self::External(t) => ("TRUE", "FALSE", t, ""),
-            Self::Failure(r) => ("FALSE", "FALSE", "", r),
+            Self::Internal(t) => ("TRUE", "TRUE", Cow::Borrowed(t), ""),
+            Self::External(t) => ("TRUE", "FALSE", Cow::Owned(t), ""),
+            Self::Failure(r) => ("FALSE", "FALSE", Cow::Borrowed(""), r),
         }
     }
 }
 
 fn set_lookup<W: Write>(status: LookupStatus, w: &mut W) -> io::Result<()> {
-    let (succ, internal, target, reason) = status.into_parts();
+    let (succ, internal, target_cow, reason) = status.into_parts();
+    let target = target_cow.as_ref();
     set_var(w, "LOOKUP_SUCCESS", succ)?;
     set_var(w, "IS_INTERNAL_DEST", internal)?;
-    set_var(w, "DIAL_TARGET", target)?;
+    set_var(w, "DIAL_TARGET", target)?; 
     if succ == "FALSE" { set_var(w, "LOOKUP_REASON", reason)?; }
     Ok(())
 }
@@ -70,7 +71,8 @@ impl AgiVars {
         let mut mode = Mode::Outbound;
 
         for line in io::stdin().lock().lines() {
-            let l = line?.trim();
+            let l_owned = line?;
+            let l = l_owned.trim();
             if l.is_empty() { break; }
             if let Some((k, v)) = l.split_once(':') {
                 let v = v.trim();
@@ -87,10 +89,10 @@ impl AgiVars {
 }
 
 fn just_sanitize(s: &str) -> Option<Cow<'_, str>> {
-    let digits = if s.chars().all(char::is_ascii_digit) {
+    let digits = if s.chars().all(|c| c.is_ascii_digit()) {
         Cow::Borrowed(s)
     } else {
-        Cow::Owned(s.chars().filter(char::is_ascii_digit).collect())
+        Cow::Owned(s.chars().filter(|c| c.is_ascii_digit()).collect())
     };
     (!digits.is_empty()).then_some(digits)
 }
@@ -119,7 +121,7 @@ fn sanitize_and_normalize(s: &str) -> Option<Cow<'_, str>> {
     }
 }
 
-fn handle_outbound<'a, W: Write>(vars: AgiVars, w: &mut W) -> io::Result<LookupStatus<'a>> {
+fn handle_outbound(vars: AgiVars, w: &mut impl Write) -> io::Result<LookupStatus<'static>> {
     if let Some(caller) = just_sanitize(&vars.caller) {
         if caller.len() == 3 {
             if let Some(&trunk) = EXT_TO_TRUNK.get(&caller) {
@@ -140,12 +142,12 @@ fn handle_outbound<'a, W: Write>(vars: AgiVars, w: &mut W) -> io::Result<LookupS
         None => if normalized.len() == 3 {
             LookupStatus::Failure("short_internal_rejected")
         } else {
-            LookupStatus::External(&normalized)
+            LookupStatus::External(normalized.into_owned())
         },
     })
 }
 
-fn run_lookup<W: Write>(vars: AgiVars, w: &mut W) -> io::Result<()> {
+fn run_lookup(vars: AgiVars, w: &mut impl Write) -> io::Result<()> {
     let status = match vars.mode {
         Mode::Outbound => handle_outbound(vars, w)?,
         Mode::Inbound => {
