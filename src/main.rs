@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow, 
+    borrow::Cow,
     io::{self, BufRead, Write, stdout},
 };
 use phf::phf_map;
@@ -29,7 +29,7 @@ fn set_var<W: Write>(w: &mut W, name: &str, value: &str) -> io::Result<()> {
 
 enum LookupStatus<'a> {
     Internal(&'a str),
-    External(String),
+    External(String), 
     Failure(&'a str),
 }
 
@@ -69,14 +69,15 @@ impl AgiVars {
         let mut dialed = String::new();
         let mut caller = String::new();
         let mut mode = Mode::Outbound;
-
-        for line in io::stdin().lock().lines() {
-            let l_owned = line?;
-            let l = l_owned.trim();
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let line = line?;
+            let l = line.trim();
             if l.is_empty() { break; }
             if let Some((k, v)) = l.split_once(':') {
+                let k = k.trim();
                 let v = v.trim();
-                match k.trim() {
+                match k {
                     "agi_arg_1" => dialed = v.to_owned(),
                     "agi_arg_2" => caller = v.to_owned(),
                     "agi_arg_3" => mode = Mode::from_str(v),
@@ -89,7 +90,7 @@ impl AgiVars {
 }
 
 fn just_sanitize(s: &str) -> Option<Cow<'_, str>> {
-    let digits = if s.chars().all(|c| c.is_ascii_digit()) {
+    let digits = if s.chars().all(|c| c.is_ascii_digit()) { 
         Cow::Borrowed(s)
     } else {
         Cow::Owned(s.chars().filter(|c| c.is_ascii_digit()).collect())
@@ -129,20 +130,21 @@ fn handle_outbound(vars: AgiVars, w: &mut impl Write) -> io::Result<LookupStatus
             }
         }
     }
-
     let normalized = match sanitize_and_normalize(&vars.dialed).ok_or(
         LookupStatus::Failure("normalize_failed_wrong_length"),
     ) {
         Ok(n) => n,
         Err(status) => return Ok(status),
     };
-
     Ok(match NUMBER_TO_EXT.get(&normalized) {
         Some(&ext) => LookupStatus::Internal(ext),
         None => if normalized.len() == 3 {
             LookupStatus::Failure("short_internal_rejected")
         } else {
-            LookupStatus::External(normalized.into_owned())
+            LookupStatus::External(match normalized {
+                Cow::Borrowed(s) => s.to_owned(),
+                Cow::Owned(s) => s,
+            })
         },
     })
 }
