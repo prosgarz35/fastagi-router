@@ -28,15 +28,8 @@ fn normalize(s: &str) -> Option<String> {
     match digits.len() {
         6 => Some(format!("73843{}", digits)),
         10 => Some(format!("7{}", digits)),
-        11 => {
-            if digits.starts_with('8') {
-                Some(format!("7{}", &digits[1..]))
-            } else if digits.starts_with('7') {
-                Some(digits)
-            } else {
-                None
-            }
-        }
+        11 if digits.starts_with('8') => Some(format!("7{}", &digits[1..])),
+        11 if digits.starts_with('7') => Some(digits),
         _ => None,
     }
 }
@@ -48,20 +41,16 @@ fn main() -> io::Result<()> {
             break;
         }
     }
-
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         println!("SET VARIABLE LOOKUP_SUCCESS \"FALSE\"");
         io::stdout().flush()?;
         return Ok(());
     }
-
     let mode = &args[1];
     let dialed = &args[2];
     let caller = args.get(3).map_or("", String::as_str);
-
     let mut success = false;
-
     match mode.as_str() {
         "in" => {
             if let Some(normal) = normalize(dialed) {
@@ -72,7 +61,7 @@ fn main() -> io::Result<()> {
             }
         }
         "out" => {
-            if let Some((trunk, _)) = MAPPINGS.iter().find(|&&(n, e)| n == caller || e == caller) {
+            if let Some((trunk, _)) = MAPPINGS.iter().find(|&&(num, ext)| num == caller || ext == caller) {
                 if let Some(num) = normalize(dialed) {
                     println!("SET VARIABLE DIAL_TRUNK \"{}\"", trunk);
                     println!("SET VARIABLE DIAL_NUMBER \"{}\"", num);
@@ -82,7 +71,6 @@ fn main() -> io::Result<()> {
         }
         _ => {}
     }
-
     println!(
         "SET VARIABLE LOOKUP_SUCCESS \"{}\"",
         if success { "TRUE" } else { "FALSE" }
