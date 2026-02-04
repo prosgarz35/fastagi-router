@@ -1,36 +1,34 @@
-name: Rust Build and Auto Release
+name: Rust Build + Release
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
-      - name: Install musl tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: true
+
       - name: Get next version
         id: version
         run: |
           latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           ver=${latest#v}
           IFS='.' read -r major minor patch <<< "$ver"
-          major=${major:-0}
-          minor=${minor:-0}
-          patch=${patch:-0}
+          major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
           if [ "$patch" -ge 9 ]; then
-            patch=1
+            patch=0
             minor=$((minor + 1))
             if [ "$minor" -eq 10 ]; then
               minor=0
@@ -42,33 +40,30 @@ jobs:
           next="v$major.$minor.$patch"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
           echo "RELEASE_TAG=$next" >> $GITHUB_ENV
+
       - name: Update Cargo.toml version
         run: |
-          VERSION=${{ env.RELEASE_VERSION }}
-          sed -i "0,/^version = .*/s//version = \"${VERSION#v}\"/" Cargo.toml
-      - run: cargo test --release --target x86_64-unknown-linux-musl
-      - run: cargo build --release --target x86_64-unknown-linux-musl
-      - name: Delete old releases and tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          sed -i "0,/^version = .*/s//version = \"${RELEASE_VERSION#v}\"/" Cargo.toml
+
+      - name: cargo test
+        run: cargo test --release
+
+      - name: cargo build
+        run: cargo build --release
+
+      - name: Commit + tag + push
         run: |
-          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read tag; do
-            if [ "$tag" != "${{ env.RELEASE_TAG }}" ]; then
-              gh release delete "$tag" --yes || true
-              git push --delete origin "$tag" || true
-            fi
-          done
-      - name: Commit, tag & push
-        run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml
           git commit -m "chore: bump to ${{ env.RELEASE_VERSION }} [skip ci]" || true
           git tag ${{ env.RELEASE_TAG }}
           git push --atomic origin main ${{ env.RELEASE_TAG }}
-      - uses: softprops/action-gh-release@v2
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          files: target/x86_64-unknown-linux-musl/release/fastagi_router
           tag_name: ${{ env.RELEASE_TAG }}
-          name: ${{ env.RELEASE_VERSION }}
+          name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
+          files: target/release/fastagi_router
