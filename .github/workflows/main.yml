@@ -28,7 +28,7 @@ jobs:
           IFS='.' read -r major minor patch <<< "$ver"
           major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
           if [ "$patch" -ge 9 ]; then
-            patch=0
+            patch=1
             minor=$((minor + 1))
             if [ "$minor" -eq 10 ]; then
               minor=0
@@ -50,6 +50,17 @@ jobs:
 
       - name: cargo build
         run: cargo build --release
+
+      - name: Delete old releases and tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read tag; do
+            if [ "$tag" != "${{ env.RELEASE_TAG }}" ]; then
+              gh release delete "$tag" --yes || true
+              git push --delete origin "$tag" || true
+            fi
+          done
 
       - name: Commit + tag + push
         run: |
