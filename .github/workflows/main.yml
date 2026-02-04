@@ -1,58 +1,41 @@
 name: Rust Build and Auto Release
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
       - uses: dtolnay/rust-toolchain@stable
-
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@v2
-
+        with:
+          cache-targets: true
       - name: Get next version
         id: version
         run: |
           latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           ver=${latest#v}
           IFS='.' read -r major minor patch <<< "$ver"
-          major=${major:-0}
-          minor=${minor:-0}
-          patch=${patch:-0}
-          if [ "$patch" -lt 9 ]; then
-            patch=$((patch + 1))
-          else
-            patch=0
-            if [ "$minor" -lt 9 ]; then
-              minor=$((minor + 1))
-            else
-              minor=0
-              major=$((major + 1))
-            fi
-          fi
+          patch=$((patch + 1))
           next="v$major.$minor.$patch"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
           echo "RELEASE_TAG=$next" >> $GITHUB_ENV
-
       - name: Update Cargo.toml version
         run: |
           VERSION=${{ env.RELEASE_VERSION }}
           sed -i "0,/^version = .*/s//version = \"${VERSION#v}\"/" Cargo.toml
-
-      - run: cargo test --release
-
-      - run: cargo build --release
-
+      - run: cargo test --release --target x86_64-unknown-linux-musl
+      - run: cargo build --release --target x86_64-unknown-linux-musl
       - name: Delete old releases and tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,7 +46,6 @@ jobs:
               git push --delete origin "$tag" || true
             fi
           done
-
       - name: Commit, tag & push
         run: |
           git config user.name "github-actions[bot]"
@@ -72,10 +54,9 @@ jobs:
           git commit -m "chore: bump to ${{ env.RELEASE_VERSION }} [skip ci]" || true
           git tag ${{ env.RELEASE_TAG }}
           git push --atomic origin main ${{ env.RELEASE_TAG }}
-
       - uses: softprops/action-gh-release@v2
         with:
-          files: target/release/fastagi_router
+          files: target/x86_64-unknown-linux-musl/release/fastagi_router
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_VERSION }}
           generate_release_notes: true
