@@ -1,6 +1,6 @@
 [package]
 name = "fastagi_router"
-version = "0.3.11"
+version = "0.4.1"
 edition = "2021"
 
 [profile.release]
