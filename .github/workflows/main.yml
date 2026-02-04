@@ -2,8 +2,7 @@ name: Rust Build and Auto Release
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -13,95 +12,48 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Setup Rust toolchain
-        id: setup-toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo-edit binary
-        id: cache-cargo-edit
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-bin-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-bin-
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-edit (Conditional)
+      - name: Get next version
+        id: version
         run: |
-          if ! command -v cargo-set-version &> /dev/null
-          then
-              cargo install cargo-edit
-          fi
-
-      - name: Cache Cargo Registry (Index)
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-index-
-
-      - name: Cache Build Dependencies (Target)
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-${{ steps.setup-toolchain.outputs.cachekey }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}-
-
-      - name: Run tests
-        run: cargo test --release
-
-      - name: Build release binary
-        run: cargo build --release
-
-      - name: Get next release version
-        id: get_version
-        run: |
-          latest=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || echo "v0.0.0")
-          
-          if [[ "$latest" =~ v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-            major="${BASH_REMATCH[1]}"
-            minor="${BASH_REMATCH[2]}"
-            patch="${BASH_REMATCH[3]}"
-            
-            if [ "$patch" -lt 9 ]; then
-              patch=$((patch+1))
-            else
-              patch=0
-              if [ "$minor" -lt 9 ]; then
-                minor=$((minor+1))
-              else
-                minor=0
-                major=$((major+1))
-              fi
-            fi
+          latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          ver=${latest#v}
+          IFS='.' read -r major minor patch <<< "$ver"
+          major=${major:-0}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          if [ "$patch" -lt 9 ]; then
+            patch=$((patch + 1))
           else
-            major=0
-            minor=1
             patch=0
+            if [ "$minor" -lt 9 ]; then
+              minor=$((minor + 1))
+            else
+              minor=0
+              major=$((major + 1))
+            fi
           fi
-
-          next="v${major}.${minor}.${patch}"
+          next="v$major.$minor.$patch"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
           echo "RELEASE_TAG=$next" >> $GITHUB_ENV
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update Cargo.toml version
         run: |
-          ver=${{ env.RELEASE_VERSION }}
-          ver=${ver#v}
-          cargo set-version $ver
+          VERSION=${{ env.RELEASE_VERSION }}
+          sed -i "0,/^version = .*/s//version = \"${VERSION#v}\"/" Cargo.toml
 
-      - name: Delete all previous releases and tags
+      - run: cargo test --release
+
+      - run: cargo build --release
+
+      - name: Delete old releases and tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -112,23 +64,18 @@ jobs:
             fi
           done
 
-      - name: Commit Cargo.toml and push tag
+      - name: Commit, tag & push
         run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml
-          git commit -m "Bump version to ${{ env.RELEASE_VERSION }} [skip ci]" || echo "No changes to commit"
+          git commit -m "chore: bump to ${{ env.RELEASE_VERSION }} [skip ci]" || true
           git tag ${{ env.RELEASE_TAG }}
-          git push origin main
-          git push origin ${{ env.RELEASE_TAG }}
+          git push --atomic origin main ${{ env.RELEASE_TAG }}
 
-      - name: Create GitHub Release and Upload Binary
-        uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v2
         with:
           files: target/release/fastagi_router
-          name: Release ${{ env.RELEASE_VERSION }}
           tag_name: ${{ env.RELEASE_TAG }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
