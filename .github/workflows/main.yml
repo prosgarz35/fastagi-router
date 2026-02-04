@@ -29,8 +29,8 @@ jobs:
           major=${major:-0}
           minor=${minor:-0}
           patch=${patch:-0}
-          if [ "$patch" -eq 9 ]; then
-            patch=0
+          if [ "$patch" -ge 9 ]; then
+            patch=1
             minor=$((minor + 1))
             if [ "$minor" -eq 10 ]; then
               minor=0
