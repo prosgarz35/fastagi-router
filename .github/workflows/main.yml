@@ -26,7 +26,19 @@ jobs:
           latest=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           ver=${latest#v}
           IFS='.' read -r major minor patch <<< "$ver"
-          patch=$((patch + 1))
+          major=${major:-0}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          if [ "$patch" -eq 9 ]; then
+            patch=0
+            minor=$((minor + 1))
+            if [ "$minor" -eq 10 ]; then
+              minor=0
+              major=$((major + 1))
+            fi
+          else
+            patch=$((patch + 1))
+          fi
           next="v$major.$minor.$patch"
           echo "RELEASE_VERSION=$next" >> $GITHUB_ENV
           echo "RELEASE_TAG=$next" >> $GITHUB_ENV
