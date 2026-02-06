@@ -24,57 +24,43 @@ const MAPPINGS: &[(&str, &str)] = &[
 ];
 
 fn normalize(s: &str) -> Option<String> {
-    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    match digits.len() {
-        6 => Some(format!("73843{}", digits)),
-        10 => Some(format!("7{}", digits)),
-        11 if digits.starts_with('8') => Some(format!("7{}", &digits[1..])),
-        11 if digits.starts_with('7') => Some(digits),
-        _ => None,
-    }
+    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    Some(match d.len() {
+        6  => format!("73843{d}"),
+        10 => format!("7{d}"),
+        11 if d.starts_with('8') => format!("7{}", &d[1..]),
+        11 if d.starts_with('7') => d,
+        _  => return None,
+    })
 }
 
 fn main() -> io::Result<()> {
     for line in io::stdin().lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            break;
-        }
+        if line.ok().map_or(true, |s| s.trim().is_empty()) { break; }
     }
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
-        println!("SET VARIABLE LOOKUP_SUCCESS \"FALSE\"");
-        io::stdout().flush()?;
+
+    let args: Vec<_> = std::env::args().collect();
+    let [_, mode, dialed, caller @ ..] = args.as_slice() else {
+        println!(r#"SET VARIABLE LOOKUP_SUCCESS "FALSE""#);
         return Ok(());
-    }
-    let mode = &args[1];
-    let dialed = &args[2];
-    let caller = args.get(3).map_or("", String::as_str);
-    let mut success = false;
-    match mode.as_str() {
-        "in" => {
-            if let Some(normal) = normalize(dialed) {
-                if let Some((_, ext)) = MAPPINGS.iter().find(|&&(n, _)| n == normal) {
-                    println!("SET VARIABLE DIAL_TARGET \"{}\"", ext);
-                    success = true;
-                }
-            }
-        }
-        "out" => {
-            if let Some((trunk, _)) = MAPPINGS.iter().find(|&&(num, ext)| num == caller || ext == caller) {
-                if let Some(num) = normalize(dialed) {
-                    println!("SET VARIABLE DIAL_TRUNK \"{}\"", trunk);
-                    println!("SET VARIABLE DIAL_NUMBER \"{}\"", num);
-                    success = true;
-                }
-            }
-        }
-        _ => {}
-    }
-    println!(
-        "SET VARIABLE LOOKUP_SUCCESS \"{}\"",
-        if success { "TRUE" } else { "FALSE" }
-    );
-    io::stdout().flush()?;
-    Ok(())
+    };
+
+    let caller = caller.first().map_or("", String::as_str);
+    let success = match mode.as_str() {
+        "in" => normalize(dialed)
+            .and_then(|n| MAPPINGS.iter().find(|&&(num,_)| num == n))
+            .map(|&(_, ext)| { println!(r#"SET VARIABLE DIAL_TARGET "{ext}""#); true }),
+
+        "out" => MAPPINGS.iter().find(|&&(n,e)| n == caller || e == caller)
+            .and_then(|&(trunk,_)| normalize(dialed).map(|num| {
+                println!(r#"SET VARIABLE DIAL_TRUNK "{trunk}""#);
+                println!(r#"SET VARIABLE DIAL_NUMBER "{num}""#);
+                true
+            })),
+
+        _ => None,
+    }.unwrap_or(false);
+
+    println!(r#"SET VARIABLE LOOKUP_SUCCESS "{}""#, if success { "TRUE" } else { "FALSE" });
+    io::stdout().flush()
 }
