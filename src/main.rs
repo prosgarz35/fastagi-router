@@ -1,5 +1,7 @@
 use std::io::{self, BufRead, Write};
 
+const REGION_PREFIX: &str = "73843";
+
 const MAPPINGS: &[(&str, &str)] = &[
     ("79235253998", "501"), ("73843602313", "501"),
     ("79235254061", "502"), ("73843601773", "502"),
@@ -18,47 +20,89 @@ const MAPPINGS: &[(&str, &str)] = &[
     ("79235069558", "519"), ("79235237068", "520"),
 ];
 
+enum AgiMode {
+    Incoming,
+    Outgoing,
+    Invalid,
+}
+
+fn normalize(s: &str) -> String {
+    let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    match d.as_str() {
+        s if s.len() == 11 && s.starts_with('8') => format!("7{}", &s[1..]),
+        s if s.len() == 11 && s.starts_with('7') => s.to_string(),
+        s if s.len() == 10 => format!("7{}", s),
+        s if s.len() == 6 => format!("{}{}", REGION_PREFIX, s),
+        _ => d,
+    }
+}
+
+fn finish_agi(stdout: &mut io::Stdout, success: bool) {
+    let status = if success { "TRUE" } else { "FALSE" };
+    let _ = writeln!(stdout, r#"SET VARIABLE LOOKUP_SUCCESS "{}""#, status);
+    let _ = stdout.flush();
+}
+
 fn main() {
-    for l in io::stdin().lock().lines() {
-        if l.map_or(true, |s| s.trim().is_empty()) { break; }
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
+
+    for line in stdin.lock().lines() {
+        match line {
+            Ok(l) if l.trim().is_empty() => break,
+            Err(_) => return,
+            _ => continue,
+        }
     }
 
     let mut args = std::env::args().skip(1);
-    let mode = args.next().unwrap_or_default();
+    let mode_raw = args.next().map(|s| s.trim().to_lowercase()).unwrap_or_default();
     
-    let digits: String = args.next().unwrap_or_default()
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
+    let dialed_arg = args.next().unwrap_or_default();
+    let dialed_raw = dialed_arg.trim();
+    
+    let caller_arg = args.next().unwrap_or_default();
+    let caller_raw = caller_arg.trim();
 
-    let dialed = match digits.len() {
-        6 => format!("73843{digits}"),
-        10 => format!("7{digits}"),
-        11 if digits.starts_with('8') => format!("7{}", &digits[1..]),
-        _ => digits
+    let mode = match mode_raw.as_str() {
+        "in" => AgiMode::Incoming,
+        "out" => AgiMode::Outgoing,
+        _ => AgiMode::Invalid,
     };
 
-    let caller = args.next().unwrap_or_default();
+    let dialed = normalize(dialed_raw);
+    let caller = normalize(caller_raw);
 
-    let found = if mode == "in" {
-        MAPPINGS.iter()
-            .find(|&&(n, _)| n == dialed)
-            .map(|&(_, ext)| {
-                println!(r#"SET VARIABLE DIAL_TARGET "{ext}""#);
-                true
-            })
-            .unwrap_or(false)
-    } else {
-        MAPPINGS.iter()
-            .find(|&&(t, e)| t == caller || e == caller)
-            .map(|&(trunk, _)| {
-                println!(r#"SET VARIABLE DIAL_TRUNK "{trunk}""#);
-                println!(r#"SET VARIABLE DIAL_NUMBER "{dialed}""#);
-                true
-            })
-            .unwrap_or(false)
+    if let AgiMode::Invalid = mode {
+        finish_agi(&mut stdout, false);
+        return;
+    }
+
+    if dialed.len() < 6 || dialed.len() > 15 || !dialed.starts_with('7') {
+        finish_agi(&mut stdout, false);
+        return;
+    }
+
+    let found = match mode {
+        AgiMode::Incoming => {
+            MAPPINGS.iter()
+                .find(|(trunk, _)| *trunk == dialed)
+                .map(|(_, ext)| {
+                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_TARGET "{}""#, ext);
+                })
+                .is_some()
+        }
+        AgiMode::Outgoing if !caller.is_empty() => {
+            MAPPINGS.iter()
+                .find(|(trunk, ext)| *trunk == caller || *ext == caller)
+                .map(|(trunk, _)| {
+                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_TRUNK "{}""#, trunk);
+                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_NUMBER "{}""#, dialed);
+                })
+                .is_some()
+        }
+        _ => false,
     };
 
-    println!(r#"SET VARIABLE LOOKUP_SUCCESS "{}""#, if found { "TRUE" } else { "FALSE" });
-    io::stdout().flush().ok();
+    finish_agi(&mut stdout, found);
 }
