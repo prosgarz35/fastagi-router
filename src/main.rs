@@ -1,13 +1,11 @@
 use std::io::{self, BufRead, Write};
 
 const REGION_PREFIX: &str = "73843";
-
 const MAPPINGS: &[(&str, &str)] = &[
     ("79235253998", "501"), ("73843602313", "501"),
     ("79235254061", "502"), ("73843601773", "502"),
-    ("79235254150", "503"),
-    ("79235254132", "504"), ("73843602414", "504"),
-    ("79235254389", "505"),
+    ("79235254150", "503"), ("79235254132", "504"),
+    ("73843602414", "504"), ("79235254389", "505"),
     ("79235254439", "506"), ("73843601771", "506"),
     ("79235254667", "507"), ("73843600912", "507"),
     ("79235254706", "508"), ("73843600911", "508"),
@@ -20,10 +18,10 @@ const MAPPINGS: &[(&str, &str)] = &[
     ("79235069558", "519"), ("79235237068", "520"),
 ];
 
-enum AgiMode {
-    Incoming,
-    Outgoing,
-    Invalid,
+fn send_cmd(stdout: &mut io::Stdout, args: std::fmt::Arguments<'_>) {
+    stdout.write_fmt(args).ok();
+    stdout.write_all(b"\n").ok();
+    stdout.flush().ok();
 }
 
 fn normalize(s: &str) -> String {
@@ -37,72 +35,43 @@ fn normalize(s: &str) -> String {
     }
 }
 
-fn finish_agi(stdout: &mut io::Stdout, success: bool) {
-    let status = if success { "TRUE" } else { "FALSE" };
-    let _ = writeln!(stdout, r#"SET VARIABLE LOOKUP_SUCCESS "{}""#, status);
-    let _ = stdout.flush();
-}
-
 fn main() {
     let mut stdout = io::stdout();
-    let stdin = io::stdin();
-
-    for line in stdin.lock().lines() {
-        match line {
-            Ok(l) if l.trim().is_empty() => break,
-            Err(_) => return,
-            _ => continue,
-        }
+    
+    for line in io::stdin().lock().lines() {
+        if let Ok(l) = line {
+            if l.trim().is_empty() { break; }
+        } else { return; }
     }
 
     let mut args = std::env::args().skip(1);
-    let mode_raw = args.next().map(|s| s.trim().to_lowercase()).unwrap_or_default();
-    
-    let dialed_arg = args.next().unwrap_or_default();
-    let dialed_raw = dialed_arg.trim();
-    
-    let caller_arg = args.next().unwrap_or_default();
-    let caller_raw = caller_arg.trim();
-
-    let mode = match mode_raw.as_str() {
-        "in" => AgiMode::Incoming,
-        "out" => AgiMode::Outgoing,
-        _ => AgiMode::Invalid,
-    };
-
-    let dialed = normalize(dialed_raw);
-    let caller = normalize(caller_raw);
-
-    if let AgiMode::Invalid = mode {
-        finish_agi(&mut stdout, false);
-        return;
-    }
+    let mode = args.next().unwrap_or_default().to_lowercase();
+    let dialed = normalize(&args.next().unwrap_or_default());
+    let caller = normalize(&args.next().unwrap_or_default());
 
     if dialed.len() < 6 || dialed.len() > 15 || !dialed.starts_with('7') {
-        finish_agi(&mut stdout, false);
+        send_cmd(&mut stdout, format_args!("SET VARIABLE LOOKUP_SUCCESS \"FALSE\""));
         return;
     }
 
-    let found = match mode {
-        AgiMode::Incoming => {
+    let found = match mode.as_str() {
+        "in" => {
             MAPPINGS.iter()
                 .find(|(trunk, _)| *trunk == dialed)
                 .map(|(_, ext)| {
-                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_TARGET "{}""#, ext);
-                })
-                .is_some()
-        }
-        AgiMode::Outgoing if !caller.is_empty() => {
+                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_TARGET \"{}\"", ext));
+                }).is_some()
+        },
+        "out" if !caller.is_empty() => {
             MAPPINGS.iter()
                 .find(|(trunk, ext)| *trunk == caller || *ext == caller)
                 .map(|(trunk, _)| {
-                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_TRUNK "{}""#, trunk);
-                    let _ = writeln!(stdout, r#"SET VARIABLE DIAL_NUMBER "{}""#, dialed);
-                })
-                .is_some()
-        }
+                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_TRUNK \"{}\"", trunk));
+                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_NUMBER \"{}\"", dialed));
+                }).is_some()
+        },
         _ => false,
     };
 
-    finish_agi(&mut stdout, found);
+    send_cmd(&mut stdout, format_args!("SET VARIABLE LOOKUP_SUCCESS \"{}\"", if found { "TRUE" } else { "FALSE" }));
 }
