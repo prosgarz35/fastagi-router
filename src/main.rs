@@ -1,6 +1,5 @@
 use std::io::{self, BufRead, Write};
 
-const REGION_PREFIX: &str = "73843";
 const MAPPINGS: &[(&str, &str)] = &[
     ("79235253998", "501"), ("73843602313", "501"),
     ("79235254061", "502"), ("73843601773", "502"),
@@ -18,60 +17,86 @@ const MAPPINGS: &[(&str, &str)] = &[
     ("79235069558", "519"), ("79235237068", "520"),
 ];
 
-fn send_cmd(stdout: &mut io::Stdout, args: std::fmt::Arguments<'_>) {
-    stdout.write_fmt(args).ok();
-    stdout.write_all(b"\n").ok();
-    stdout.flush().ok();
+fn send_cmd(out: &mut impl Write, name: &str, value: &str) -> io::Result<()> {
+    writeln!(out, "SET VARIABLE {} \"{}\"", name, value)?;
+    out.flush()
 }
 
 fn normalize(s: &str) -> String {
     let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    match d.as_str() {
-        s if s.len() == 11 && s.starts_with('8') => format!("7{}", &s[1..]),
-        s if s.len() == 11 && s.starts_with('7') => s.to_string(),
-        s if s.len() == 10 => format!("7{}", s),
-        s if s.len() == 6 => format!("{}{}", REGION_PREFIX, s),
+    match d.len() {
+        6 => {
+            let mut n = String::with_capacity(11);
+            n.push_str("73843");
+            n.push_str(&d);
+            n
+        }
+        10 => {
+            let mut n = String::with_capacity(11);
+            n.push('7');
+            n.push_str(&d);
+            n
+        }
+        11 if d.starts_with('8') => {
+            let mut n = String::with_capacity(11);
+            n.push('7');
+            n.push_str(&d[1..]);
+            n
+        }
+        11 => d,
         _ => d,
     }
 }
 
 fn main() {
-    let mut stdout = io::stdout();
-    
-    for line in io::stdin().lock().lines() {
-        if let Ok(l) = line {
-            if l.trim().is_empty() { break; }
-        } else { return; }
+    if let Err(_) = run() {
+        std::process::exit(1);
     }
+}
 
+fn run() -> io::Result<()> {
     let mut args = std::env::args().skip(1);
     let mode = args.next().unwrap_or_default().to_lowercase();
-    let dialed = normalize(&args.next().unwrap_or_default());
-    let caller = normalize(&args.next().unwrap_or_default());
+    let dialed_raw = args.next().unwrap_or_default();
+    let caller_raw = args.next().unwrap_or_default();
 
-    if dialed.len() < 6 || dialed.len() > 15 || !dialed.starts_with('7') {
-        send_cmd(&mut stdout, format_args!("SET VARIABLE LOOKUP_SUCCESS \"FALSE\""));
-        return;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    if dialed_raw.is_empty() {
+        return send_cmd(&mut out, "LOOKUP_SUCCESS", "FALSE");
     }
 
-    let found = match mode.as_str() {
-        "in" => {
-            MAPPINGS.iter()
-                .find(|(trunk, _)| *trunk == dialed)
-                .map(|(_, ext)| {
-                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_TARGET \"{}\"", ext));
-                }).is_some()
-        },
-        "out" if !caller.is_empty() => {
-            MAPPINGS.iter()
-                .find(|(trunk, ext)| *trunk == caller || *ext == caller)
-                .map(|(trunk, _)| {
-                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_TRUNK \"{}\"", trunk));
-                    send_cmd(&mut stdout, format_args!("SET VARIABLE DIAL_NUMBER \"{}\"", dialed));
-                }).is_some()
-        },
-        _ => false,
-    };
+    let stdin = io::stdin();
+    for line in stdin.lock().lines().flatten() {
+        if line.trim().is_empty() { break; }
+    }
 
-    send_cmd(&mut stdout, format_args!("SET VARIABLE LOOKUP_SUCCESS \"{}\"", if found { "TRUE" } else { "FALSE" }));
+    let dialed = normalize(&dialed_raw);
+    let caller = normalize(&caller_raw);
+
+    if dialed.len() != 11 || !dialed.starts_with('7') {
+        return send_cmd(&mut out, "LOOKUP_SUCCESS", "FALSE");
+    }
+
+    let mut found = false;
+
+    match mode.as_str() {
+        "in" => {
+            if let Some((_, ext)) = MAPPINGS.iter().find(|(num, _)| num == dialed) {
+                send_cmd(&mut out, "DIAL_TARGET", ext)?;
+                found = true;
+            }
+        }
+        "out" if !caller.is_empty() => {
+            if let Some((trunk, _)) = MAPPINGS.iter().find(|(num, ext)| num == caller || ext == caller) {
+                send_cmd(&mut out, "DIAL_TRUNK", trunk)?;
+                send_cmd(&mut out, "DIAL_NUMBER", &dialed)?;
+                found = true;
+            }
+        }
+        _ => {}
+    }
+
+    send_cmd(&mut out, "LOOKUP_SUCCESS", if found { "TRUE" } else { "FALSE" })
 }
