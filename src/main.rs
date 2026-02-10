@@ -83,13 +83,13 @@ fn run() -> io::Result<()> {
 
     match mode.as_str() {
         "in" => {
-            if let Some((_, ext)) = MAPPINGS.iter().find(|(num, _)| num == dialed) {
+            if let Some((_, ext)) = MAPPINGS.iter().find(|(num, _)| *num == dialed) {
                 send_cmd(&mut out, "DIAL_TARGET", ext)?;
                 found = true;
             }
         }
         "out" if !caller.is_empty() => {
-            if let Some((trunk, _)) = MAPPINGS.iter().find(|(num, ext)| num == caller || ext == caller) {
+            if let Some((trunk, _)) = MAPPINGS.iter().find(|(num, ext)| *num == caller || *ext == caller) {
                 send_cmd(&mut out, "DIAL_TRUNK", trunk)?;
                 send_cmd(&mut out, "DIAL_NUMBER", &dialed)?;
                 found = true;
